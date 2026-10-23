@@ -2,9 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
-};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use proximity_forests_core::{
     DistanceChoice, DistanceSamplingContext, NumericVectorView, RegressionTargets,
     SupervisedCriterion,
@@ -72,15 +70,21 @@ impl NativeProximityForestRegressor {
         })
     }
 
-    /// Fits one-output floating-point regression targets.
-    fn fit(&mut self, x: PyReadonlyArray2<'_, f64>, y: PyReadonlyArray1<'_, f64>) -> PyResult<()> {
+    /// Fits one or more row-major floating-point regression targets.
+    fn fit(&mut self, x: PyReadonlyArray2<'_, f64>, y: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         let shape = x.shape();
+        let target_shape = y.shape();
         if shape[0] == 0 || shape[1] == 0 {
             return Err(PyValueError::new_err("X must be a nonempty 2D array"));
         }
-        if y.len() != shape[0] {
+        if target_shape[0] != shape[0] {
             return Err(PyValueError::new_err(
                 "X and y contain different numbers of samples",
+            ));
+        }
+        if target_shape[1] == 0 {
+            return Err(PyValueError::new_err(
+                "y must contain at least one regression output",
             ));
         }
         if y.as_array().iter().any(|value| !value.is_finite()) {
@@ -98,8 +102,9 @@ impl NativeProximityForestRegressor {
             .iter()
             .map(|row| NumericVectorView::from_f64(row))
             .collect();
-        let targets =
-            RegressionTargets::from_f64(y.as_slice()?.to_vec(), shape[0], 1).map_err(core_error)?;
+        let target_values = y.as_array().iter().copied().collect();
+        let targets = RegressionTargets::from_f64(target_values, target_shape[0], target_shape[1])
+            .map_err(core_error)?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).expect("validated positive"),
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),

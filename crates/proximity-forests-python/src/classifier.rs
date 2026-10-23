@@ -2,9 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods,
-};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use proximity_forests_core::{
     ClassificationTargets, DistanceChoice, DistanceSamplingContext, NumericVectorView,
     SupervisedCriterion,
@@ -32,7 +30,7 @@ pub struct NativeProximityForestClassifier {
     distance_catalog: Box<[DistanceChoice]>,
     model: Option<ClassificationForest>,
     n_features_in: Option<usize>,
-    n_classes: Option<usize>,
+    class_counts: Option<Box<[usize]>>,
 }
 
 #[pymethods]
@@ -66,30 +64,54 @@ impl NativeProximityForestClassifier {
             distance_catalog: parse_vector_catalog(distances)?,
             model: None,
             n_features_in: None,
-            n_classes: None,
+            class_counts: None,
         })
     }
 
-    /// Fits encoded single-output class identifiers.
+    /// Fits row-major encoded single- or multi-output class identifiers.
     fn fit(
         &mut self,
         x: PyReadonlyArray2<'_, f64>,
-        y: PyReadonlyArray1<'_, u32>,
-        n_classes: usize,
+        y: PyReadonlyArray2<'_, u32>,
+        class_counts: Vec<usize>,
     ) -> PyResult<()> {
         let shape = x.shape();
+        let target_shape = y.shape();
         if shape[0] == 0 || shape[1] == 0 {
             return Err(PyValueError::new_err("X must be a nonempty 2D array"));
         }
-        if y.len() != shape[0] {
+        if target_shape[0] != shape[0] {
             return Err(PyValueError::new_err(
                 "X and y contain different numbers of samples",
             ));
         }
-        if n_classes < 2 {
+        if target_shape[1] == 0 {
             return Err(PyValueError::new_err(
-                "classification requires at least two classes",
+                "y must contain at least one classification output",
             ));
+        }
+        if class_counts.len() != target_shape[1] {
+            return Err(PyValueError::new_err(
+                "class_counts must contain one entry per classification output",
+            ));
+        }
+        if class_counts.iter().any(|&count| count < 2) {
+            return Err(PyValueError::new_err(
+                "each classification output requires at least two classes",
+            ));
+        }
+        for (output, &count) in class_counts.iter().enumerate() {
+            let count_u32 = u32::try_from(count)
+                .map_err(|_| PyValueError::new_err("class count does not fit in u32"))?;
+            if y.as_array()
+                .column(output)
+                .iter()
+                .any(|&class| class >= count_u32)
+            {
+                return Err(PyValueError::new_err(
+                    "encoded class identifier is outside its output class range",
+                ));
+            }
         }
 
         let distance_sampling = vector_sampling_context(x.as_array())?;
@@ -98,8 +120,9 @@ impl NativeProximityForestClassifier {
             .iter()
             .map(|row| NumericVectorView::from_f64(row))
             .collect();
-        let targets =
-            ClassificationTargets::single_output(y.as_slice()?.to_vec()).map_err(core_error)?;
+        let target_values = y.as_array().iter().copied().collect();
+        let targets = ClassificationTargets::new(target_values, target_shape[0], target_shape[1])
+            .map_err(core_error)?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).expect("validated positive"),
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),
@@ -111,9 +134,6 @@ impl NativeProximityForestClassifier {
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
         config.dimension_selection = DimensionSelection::All;
 
-        // The first Python slice intentionally starts with a conservative,
-        // parameter-free distance catalog. Additional typed distances will be
-        // exposed as the Python parameter translator is expanded.
         let model = fit_vector_classification_forest(
             config,
             &views,
@@ -124,18 +144,23 @@ impl NativeProximityForestClassifier {
             SupervisedCriterion::Gini,
         )
         .map_err(core_error)?;
-
         self.model = Some(model);
         self.n_features_in = Some(shape[1]);
-        self.n_classes = Some(n_classes);
+        self.class_counts = Some(class_counts.into_boxed_slice());
         Ok(())
     }
 
+    /// Predicts encoded classes for a single fitted output.
     fn predict<'py>(
         &self,
         py: Python<'py>,
         x: PyReadonlyArray2<'py, f64>,
     ) -> PyResult<Bound<'py, PyArray1<u32>>> {
+        if self.output_count()? != 1 {
+            return Err(PyValueError::new_err(
+                "predict is only available for one-output models; use predict_matrix",
+            ));
+        }
         let predictions = self.predict_batch(x)?;
         let values: Vec<u32> = predictions
             .iter()
@@ -144,16 +169,44 @@ impl NativeProximityForestClassifier {
         Ok(values.into_pyarray(py))
     }
 
-    fn predict_proba<'py>(
+    /// Predicts encoded classes for all fitted outputs.
+    fn predict_matrix<'py>(
         &self,
         py: Python<'py>,
         x: PyReadonlyArray2<'py, f64>,
+    ) -> PyResult<Bound<'py, PyArray2<u32>>> {
+        let predictions = self.predict_batch(x)?;
+        let output_count = self.output_count()?;
+        let mut values = Vec::with_capacity(predictions.len() * output_count);
+        for prediction in &predictions {
+            if prediction.classes().len() != output_count {
+                return Err(PyRuntimeError::new_err(
+                    "native classification prediction has the wrong output width",
+                ));
+            }
+            values.extend_from_slice(prediction.classes());
+        }
+        let array =
+            numpy::ndarray::Array2::from_shape_vec((predictions.len(), output_count), values)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(array.into_pyarray(py))
+    }
+
+    /// Returns probabilities for one fitted output.
+    fn predict_proba_output<'py>(
+        &self,
+        py: Python<'py>,
+        x: PyReadonlyArray2<'py, f64>,
+        output: usize,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let predictions = self.predict_batch(x)?;
-        let n_classes = self.n_classes.ok_or_else(not_fitted)?;
+        let class_counts = self.class_counts.as_deref().ok_or_else(not_fitted)?;
+        let &n_classes = class_counts
+            .get(output)
+            .ok_or_else(|| PyValueError::new_err("classification output index is out of range"))?;
         let mut values = vec![0.0; predictions.len() * n_classes];
         for (sample, prediction) in predictions.iter().enumerate() {
-            let probabilities = prediction.probabilities(0).ok_or_else(|| {
+            let probabilities = prediction.probabilities(output).ok_or_else(|| {
                 PyRuntimeError::new_err("classification output probability was unavailable")
             })?;
             for &(class, probability) in probabilities {
@@ -226,6 +279,13 @@ impl NativeProximityForestClassifier {
             self.n_jobs,
         )
         .map_err(core_error)
+    }
+
+    fn output_count(&self) -> PyResult<usize> {
+        self.model
+            .as_ref()
+            .map(ClassificationForest::output_count)
+            .ok_or_else(not_fitted)
     }
 
     fn validate_features(&self, shape: &[usize]) -> PyResult<()> {

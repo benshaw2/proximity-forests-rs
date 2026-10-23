@@ -1,5 +1,4 @@
 """Scikit-learn-shaped proximity forest regressor."""
-
 from __future__ import annotations
 
 import numpy as np
@@ -9,11 +8,11 @@ from ._distances import normalize_vector_distances
 
 
 class ProximityForestRegressor:
-    """Proximity forest regressor with native fitting and prediction.
+    """Proximity forest regressor for single- and multi-target regression.
 
-    This initial wrapper supports one continuous target. Multi-output regression
-    is already represented in the Rust core and will be exposed in a coordinated
-    binding update alongside multi-output and multilabel classification.
+    A one-dimensional target produces one-dimensional predictions. A
+    two-dimensional target with shape ``(n_samples, n_outputs)`` produces a
+    prediction matrix with the same output width.
     """
 
     def __init__(
@@ -42,12 +41,17 @@ class ProximityForestRegressor:
     def fit(self, X, y):
         X = self._validate_X(X)
         y = np.asarray(y, dtype=np.float64)
-        if y.ndim != 1:
-            raise ValueError("The initial regressor supports one-dimensional y")
+        if y.ndim not in (1, 2):
+            raise ValueError("y must be one- or two-dimensional")
         if y.shape[0] != X.shape[0]:
             raise ValueError("X and y contain different numbers of samples")
+        if y.ndim == 2 and y.shape[1] == 0:
+            raise ValueError("y must contain at least one regression output")
         if not np.isfinite(y).all():
             raise ValueError("y must contain only finite values")
+
+        self._target_was_1d = y.ndim == 1
+        y_matrix = y.reshape(-1, 1) if self._target_was_1d else y
 
         self._native = _NativeProximityForestRegressor(
             n_estimators=int(self.n_estimators),
@@ -60,14 +64,17 @@ class ProximityForestRegressor:
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
             distances=list(normalize_vector_distances(self.distances)),
         )
-        self._native.fit(X, np.ascontiguousarray(y))
+        self._native.fit(X, np.ascontiguousarray(y_matrix, dtype=np.float64))
         self.n_features_in_ = self._native.n_features_in_
         self.n_outputs_ = self._native.n_outputs_
         return self
 
     def predict(self, X):
         native = self._check_is_fitted()
-        return np.asarray(native.predict(self._validate_X(X)))
+        X = self._validate_X(X)
+        if self._target_was_1d:
+            return np.asarray(native.predict(X))
+        return np.asarray(native.predict_matrix(X))
 
     def apply(self, X):
         """Return terminal node indices with shape ``(n_samples, n_trees)``."""
