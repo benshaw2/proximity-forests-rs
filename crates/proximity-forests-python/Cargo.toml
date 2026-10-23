@@ -1,0 +1,14 @@
+[package]
+name = "proximity-forests-python"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proximity-forests-core = { path = "../proximity-forests-core" }
+pyo3 = { version = "0.30", features = ["extension-module"] }
+numpy = "0.30"

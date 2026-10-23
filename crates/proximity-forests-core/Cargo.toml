@@ -1,0 +1,22 @@
+[package]
+name = "proximity-forests-core"
+description = "High-performance Rust core for Proximity Forest models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "proximity_forests_core"
+path = "src/lib.rs"
+
+[features]
+default = ["parallel"]
+parallel = []
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

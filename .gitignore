@@ -1,0 +1,62 @@
+# Cargo build output
+/target/
+
+# Private living implementation plan
+/IMPLEMENTATION_PLAN.txt
+/DISTANCE_OPTIMIZATION_BACKLOG.md
+
+# RustRover / IntelliJ local workspace state
+/.idea/
+*.iml
+
+# VS Code local state
+/.vscode/
+
+# Python build and cache output
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.mypy_cache/
+/ruff_cache/
+/.venv/
+/venv/
+/dist/
+/build/
+*.egg-info/
+
+# Native extension artifacts if emitted into the source tree
+*.so
+*.pyd
+*.dylib
+
+# Maturin and coverage output
+/htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Jupyter scratch notebooks and checkpoints
+/*.ipynb
+**/.ipynb_checkpoints/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local data, experiment output, and profiling
+/data/
+/results/
+/benchmarks/results/
+/profiles/
+*.prof
+*.flamegraph
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+
+# Temporary editor files
+*~
+*.swp
+*.swo
