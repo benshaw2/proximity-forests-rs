@@ -18,17 +18,19 @@ pub mod target;
 
 pub use data::{DataLayout, MultivariateSeriesView, NumericVectorView, TimeAxisView, VectorRole};
 pub use distance::{
-    ClosestExemplar, DistanceCapabilities, DistanceConfig, DistanceCutoff, DistanceEvaluator,
-    DistanceKind, DistanceScratch, DtwArowParameters, DtwParameters, ErpParameters, FiniteF64,
-    LcssParameters, MsmParameters, NoOverlapPolicy, ShapeDtwParameters, TweParameters,
-    WeightedDtwParameters, cid, cid_independent, closest_exemplar, cosine, cosine_selected, ddtw,
-    ddtw_dependent, ddtw_independent, derivative_transform, dtw, dtw_arow, dtw_arow_dependent,
+    ClosestExemplar, DistanceCapabilities, DistanceChoice, DistanceConfig, DistanceCutoff,
+    DistanceEvaluator, DistanceKind, DistanceSamplingContext, DistanceSamplingPolicy,
+    DistanceScratch, DtwArowParameters, DtwParameters, ErpParameters, FiniteF64,
+    JavaCompatibleDistanceSampling, LcssParameters, MsmParameters, NoOverlapPolicy,
+    SampledDistanceFamily, ShapeDtwParameters, TweParameters, WeightedDtwParameters, cid,
+    cid_independent, closest_exemplar, cosine, cosine_selected, ddtw, ddtw_dependent,
+    ddtw_independent, derivative_transform, dtw, dtw_arow, dtw_arow_dependent,
     dtw_arow_independent, dtw_dependent, dtw_independent, erp, erp_independent, lcss,
     lcss_independent, manhattan, manhattan_independent, manhattan_selected, msm, msm_independent,
-    nan_squared_euclidean, nan_squared_euclidean_independent, nan_squared_euclidean_selected, sbd,
-    sbd_independent, shape_hog_1d_dtw, shape_hog_1d_dtw_independent, shape_hog_dtw,
-    squared_euclidean, squared_euclidean_independent, squared_euclidean_selected, twe,
-    twe_independent, wddtw, wddtw_dependent, wddtw_independent, wdtw, wdtw_dependent,
+    nan_squared_euclidean, nan_squared_euclidean_independent, nan_squared_euclidean_selected,
+    resolve_distance_choice, sbd, sbd_independent, shape_hog_1d_dtw, shape_hog_1d_dtw_independent,
+    shape_hog_dtw, squared_euclidean, squared_euclidean_independent, squared_euclidean_selected,
+    twe, twe_independent, wddtw, wddtw_dependent, wddtw_independent, wdtw, wdtw_dependent,
     wdtw_independent,
 };
 pub use error::{CoreError, CoreResult};

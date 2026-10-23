@@ -6,6 +6,7 @@ import numbers
 import numpy as np
 
 from ._core import _NativeProximityIsolationForest
+from ._distances import normalize_vector_distances
 
 
 class ProximityIsolationForest:
@@ -26,6 +27,7 @@ class ProximityIsolationForest:
         max_depth: int | None = None,
         min_samples_split: int = 2,
         contamination: str | float = "auto",
+        distances="default",
         bootstrap: bool = False,
         random_state: int | None = None,
         n_jobs: int | None = None,
@@ -36,6 +38,7 @@ class ProximityIsolationForest:
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.contamination = contamination
+        self.distances = distances
         self.bootstrap = bootstrap
         self.random_state = random_state
         self.n_jobs = n_jobs
@@ -53,6 +56,7 @@ class ProximityIsolationForest:
             bootstrap=bool(self.bootstrap),
             random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
+            distances=list(normalize_vector_distances(self.distances)),
         )
         self._native.fit(X)
         self.n_features_in_ = self._native.n_features_in_
@@ -70,13 +74,14 @@ class ProximityIsolationForest:
         return self
 
     def anomaly_score(self, X):
-        """Return scores in (0, 1], with larger values more anomalous."""
+        """Return canonical anomaly scores, with larger values more anomalous.
+
+        Scores use the Isolation Forest orientation and normally lie in
+        ``(0, 1]``. ``score_samples(X)`` returns the sign-reversed values for
+        compatibility with scikit-learn-style outlier estimators.
+        """
         native = self._check_is_fitted()
-        return np.asarray(
-            native.anomaly_score(
-                self._validate_X(X)
-            )
-        )
+        return np.asarray(native.anomaly_score(self._validate_X(X)))
 
     def score_samples(self, X):
         """Return normality-oriented raw scores; lower means more abnormal."""
@@ -104,6 +109,7 @@ class ProximityIsolationForest:
             "max_depth": self.max_depth,
             "min_samples_split": self.min_samples_split,
             "contamination": self.contamination,
+            "distances": self.distances,
             "bootstrap": self.bootstrap,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,

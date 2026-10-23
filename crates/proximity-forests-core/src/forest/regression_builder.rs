@@ -1,14 +1,13 @@
 //! Iterative regression-tree entry points.
 
-use crate::{
-    CoreResult, DistanceConfig, ForestConfig, MultivariateSeriesView, NumericVectorView,
-    RegressionTargets, SupervisedCriterion,
-};
-
 use super::{
     CandidateSelectionContext, LeafPayload, NodeMembership, ObservationIndex, ProximityTree,
     RegressionLeaf, TreeWorkspace, build_tree_iterative, select_multivariate_regression,
     select_vector_regression,
+};
+use crate::{
+    CoreResult, DistanceChoice, DistanceSamplingContext, ForestConfig, MultivariateSeriesView,
+    NumericVectorView, RegressionTargets, SupervisedCriterion,
 };
 
 /// Builds one vector-layout regression tree iteratively.
@@ -19,7 +18,8 @@ pub fn build_vector_regression_tree(
     targets: &RegressionTargets,
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: SupervisedCriterion,
@@ -40,6 +40,7 @@ pub fn build_vector_regression_tree(
                 criterion,
                 CandidateSelectionContext {
                     distance_catalog,
+                    distance_sampling,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count,
@@ -61,7 +62,7 @@ pub fn build_vector_regression_tree(
     )
 }
 
-/// Builds one multivariate regression tree iteratively.
+/// Builds one multivariate-layout regression tree iteratively.
 pub fn build_multivariate_regression_tree(
     config: &ForestConfig,
     tree_index: usize,
@@ -69,7 +70,8 @@ pub fn build_multivariate_regression_tree(
     targets: &RegressionTargets,
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: SupervisedCriterion,
@@ -90,6 +92,7 @@ pub fn build_multivariate_regression_tree(
                 criterion,
                 CandidateSelectionContext {
                     distance_catalog,
+                    distance_sampling,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count,

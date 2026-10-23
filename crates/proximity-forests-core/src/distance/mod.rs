@@ -2,6 +2,7 @@
 
 mod arow;
 mod capabilities;
+mod choice;
 mod closest;
 mod complexity;
 mod config;
@@ -18,6 +19,7 @@ mod missing;
 mod missing_multivariate;
 mod msm;
 mod multivariate_euclidean;
+mod sampling;
 mod scratch;
 mod shape;
 mod twe;
@@ -26,6 +28,10 @@ mod weighted_dtw;
 
 pub use arow::{dtw_arow, dtw_arow_dependent, dtw_arow_independent};
 pub use capabilities::DistanceCapabilities;
+pub use choice::{
+    DistanceChoice, DistanceSamplingContext, DistanceSamplingPolicy, SampledDistanceFamily,
+    resolve_distance_choice,
+};
 pub use closest::{ClosestExemplar, closest_exemplar};
 pub use complexity::{cid, cid_independent};
 pub use config::{
@@ -45,6 +51,7 @@ pub use missing::{NoOverlapPolicy, nan_squared_euclidean, nan_squared_euclidean_
 pub use missing_multivariate::nan_squared_euclidean_independent;
 pub use msm::{msm, msm_independent};
 pub use multivariate_euclidean::squared_euclidean_independent;
+pub use sampling::JavaCompatibleDistanceSampling;
 pub use scratch::DistanceScratch;
 pub use shape::{shape_hog_1d_dtw, shape_hog_1d_dtw_independent, shape_hog_dtw};
 pub use twe::{twe, twe_independent};

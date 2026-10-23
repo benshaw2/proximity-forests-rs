@@ -1,7 +1,8 @@
 //! Deterministic split-candidate generation.
 
 use crate::{
-    CoreError, CoreResult, DimensionSelection, DistanceConfig, ModelRng, RandomPurpose, SeedMixer,
+    CoreError, CoreResult, DimensionSelection, DistanceChoice, DistanceSamplingContext,
+    JavaCompatibleDistanceSampling, ModelRng, RandomPurpose, SeedMixer, resolve_distance_choice,
     sample_dimensions, sample_weighted_without_replacement,
 };
 
@@ -18,21 +19,24 @@ pub struct CandidateIdentity {
     pub candidate_index: usize,
 }
 
-/// Generates one fully specified candidate from a supplied distance catalog.
+/// Generates one fully specified candidate from a distance-choice catalog.
+///
+/// A selected sampled family is resolved exactly once with the candidate's
+/// distance stream. Routing and scoring therefore receive a concrete immutable
+/// distance configuration and perform no parameter sampling.
 ///
 /// Distance, dimension, and exemplar choices use separate purpose-specific
-/// streams. Candidate generation is consequently independent of worker
-/// scheduling and of how many random draws another choice requires.
-///
-/// Exemplar sampling is weighted by bootstrap multiplicity and performed over
-/// distinct observations without replacement.
+/// streams, so changing one choice's number of random draws cannot perturb the
+/// other choices or make results depend on worker scheduling.
 ///
 /// # Errors
 ///
-/// Returns an error for an empty distance catalog, incompatible node mappings,
-/// an invalid dimension selection, or an excessive exemplar count.
+/// Returns an error for an empty catalog, invalid sampling context,
+/// incompatible node mappings, invalid dimension selection, or excessive
+/// exemplar count.
 pub fn generate_candidate(
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     dimension_selection: DimensionSelection,
     exemplar_count: usize,
@@ -43,7 +47,7 @@ pub fn generate_candidate(
     if distance_catalog.is_empty() {
         return Err(CoreError::invalid_configuration(
             "distance_catalog",
-            "candidate generation requires at least one distance configuration",
+            "candidate generation requires at least one distance choice",
         ));
     }
     if exemplar_count == 0 {
@@ -65,7 +69,13 @@ pub fn generate_candidate(
     let exemplar_seed = candidate_seed(identity, RandomPurpose::CandidateExemplars);
 
     let mut distance_rng = ModelRng::from_seed(distance_seed);
-    let distance = distance_catalog[distance_rng.index(distance_catalog.len())?].clone();
+    let choice = &distance_catalog[distance_rng.index(distance_catalog.len())?];
+    let distance = resolve_distance_choice(
+        choice,
+        distance_sampling,
+        &mut distance_rng,
+        &JavaCompatibleDistanceSampling,
+    )?;
 
     let mut dimension_rng = ModelRng::from_seed(dimension_seed);
     let selected_dimensions = sample_dimensions(
@@ -98,7 +108,10 @@ fn candidate_seed(identity: CandidateIdentity, purpose: RandomPurpose) -> u64 {
 mod tests {
     use super::ObservationIndex;
     use super::{CandidateIdentity, generate_candidate};
-    use crate::{DimensionSelection, DistanceConfig, NodeMembership, SampleId};
+    use crate::{
+        DimensionSelection, DistanceChoice, DistanceConfig, DistanceSamplingContext,
+        NodeMembership, SampleId,
+    };
 
     #[test]
     fn generation_is_repeatable_and_uses_distinct_exemplars() {
@@ -119,8 +132,14 @@ mod tests {
             node_path: 2,
             candidate_index: 1,
         };
+        let catalog = [
+            DistanceChoice::Fixed(DistanceConfig::SquaredEuclidean),
+            DistanceChoice::Fixed(DistanceConfig::Manhattan),
+        ];
+        let sampling = DistanceSamplingContext::new(5, 1.0).expect("sampling context");
         let first = generate_candidate(
-            &[DistanceConfig::SquaredEuclidean, DistanceConfig::Manhattan],
+            &catalog,
+            sampling,
             5,
             DimensionSelection::FixedCount(2),
             2,
@@ -130,7 +149,8 @@ mod tests {
         )
         .expect("candidate");
         let second = generate_candidate(
-            &[DistanceConfig::SquaredEuclidean, DistanceConfig::Manhattan],
+            &catalog,
+            sampling,
             5,
             DimensionSelection::FixedCount(2),
             2,

@@ -1,23 +1,30 @@
 //! Task-specific candidate generation, routing, scoring, and retention.
 
-use crate::{
-    ClassificationTargets, CoreError, CoreResult, DimensionSelection, DistanceConfig,
-    IsolationCriterion, ModelRng, MultivariateSeriesView, NumericVectorView, RandomPurpose,
-    RegressionTargets, SeedMixer, SupervisedCriterion, TiePolicy,
-};
-
 use super::{
     CandidateIdentity, CandidatePartition, CandidateSelector, CandidateSplit, NodeMembership,
     ObservationIndex, SelectedCandidate, TreeWorkspace, generate_candidate, partition_multivariate,
     partition_vectors, sample_class_exemplars, score_classification, score_isolation,
     score_regression,
 };
+use crate::DistanceSamplingContext;
+use crate::{
+    ClassificationTargets, CoreError, CoreResult, DimensionSelection, DistanceChoice,
+    IsolationCriterion, ModelRng, MultivariateSeriesView, NumericVectorView, RandomPurpose,
+    RegressionTargets, SeedMixer, SupervisedCriterion, TiePolicy,
+};
 
 /// Immutable controls shared by task-specific candidate selectors.
 #[derive(Clone, Copy, Debug)]
 pub struct CandidateSelectionContext<'a> {
-    /// Candidate distance catalog.
-    pub distance_catalog: &'a [DistanceConfig],
+    /// Fixed configurations and sampled families available to each candidate.
+    ///
+    /// Sampled entries are resolved once before routing and scoring.
+    pub distance_catalog: &'a [DistanceChoice],
+    /// Dataset-level statistics reused during candidate-local parameter sampling.
+    ///
+    /// The context is computed once at the fitting boundary; candidate selection
+    /// performs no dataset scan.
+    pub distance_sampling: DistanceSamplingContext,
     /// Number of available dimensions or channels.
     pub available_dimensions: usize,
     /// Node-level dimension selection rule.
@@ -255,6 +262,7 @@ where
     for candidate_index in 0..context.candidate_count {
         let generic = generate_candidate(
             context.distance_catalog,
+            context.distance_sampling,
             context.available_dimensions,
             context.dimension_selection,
             1,
@@ -324,6 +332,7 @@ where
     for candidate_index in 0..context.candidate_count {
         let candidate = generate_candidate(
             context.distance_catalog,
+            context.distance_sampling,
             context.available_dimensions,
             context.dimension_selection,
             context.exemplar_count,

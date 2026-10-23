@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from ._core import _NativeProximityForestRegressor
+from ._distances import normalize_vector_distances
 
 
 class ProximityForestRegressor:
@@ -23,6 +24,7 @@ class ProximityForestRegressor:
         n_exemplars: int = 2,
         max_depth: int | None = None,
         min_samples_split: int = 2,
+        distances="default",
         bootstrap: bool = True,
         random_state: int | None = None,
         n_jobs: int | None = None,
@@ -32,6 +34,7 @@ class ProximityForestRegressor:
         self.n_exemplars = n_exemplars
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
+        self.distances = distances
         self.bootstrap = bootstrap
         self.random_state = random_state
         self.n_jobs = n_jobs
@@ -55,6 +58,7 @@ class ProximityForestRegressor:
             bootstrap=bool(self.bootstrap),
             random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
+            distances=list(normalize_vector_distances(self.distances)),
         )
         self._native.fit(X, np.ascontiguousarray(y))
         self.n_features_in_ = self._native.n_features_in_
@@ -78,6 +82,7 @@ class ProximityForestRegressor:
             "n_exemplars": self.n_exemplars,
             "max_depth": self.max_depth,
             "min_samples_split": self.min_samples_split,
+            "distances": self.distances,
             "bootstrap": self.bootstrap,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,

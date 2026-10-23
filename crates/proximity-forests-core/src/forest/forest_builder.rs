@@ -1,9 +1,9 @@
 //! Parallel forest orchestration with model-owned observations.
 
 use crate::{
-    ClassificationTargets, CoreError, CoreResult, DistanceConfig, ForestConfig, IsolationCriterion,
-    ModelRng, MultivariateSeriesView, NumericVectorView, RandomPurpose, RegressionTargets,
-    SampleId, SeedMixer, SupervisedCriterion,
+    ClassificationTargets, CoreError, CoreResult, DistanceChoice, DistanceSamplingContext,
+    ForestConfig, IsolationCriterion, ModelRng, MultivariateSeriesView, NumericVectorView,
+    RandomPurpose, RegressionTargets, SampleId, SeedMixer, SupervisedCriterion,
 };
 
 use super::{
@@ -19,7 +19,8 @@ pub fn fit_vector_classification_forest(
     config: ForestConfig,
     observations: &[NumericVectorView<'_>],
     targets: &ClassificationTargets,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     criterion: SupervisedCriterion,
 ) -> CoreResult<ClassificationForest> {
@@ -39,6 +40,7 @@ pub fn fit_vector_classification_forest(
                 membership,
                 root_observations,
                 distance_catalog,
+                distance_sampling,
                 available_dimensions,
                 criterion,
                 &mut TreeWorkspace::new(),
@@ -56,7 +58,8 @@ pub fn fit_multivariate_classification_forest(
     config: ForestConfig,
     observations: &[MultivariateSeriesView<'_>],
     targets: &ClassificationTargets,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     criterion: SupervisedCriterion,
 ) -> CoreResult<ClassificationForest> {
     validate_counts(observations.len(), targets.sample_count())?;
@@ -76,6 +79,7 @@ pub fn fit_multivariate_classification_forest(
                 membership,
                 root_observations,
                 distance_catalog,
+                distance_sampling,
                 dimensions,
                 criterion,
                 &mut TreeWorkspace::new(),
@@ -93,7 +97,8 @@ pub fn fit_vector_regression_forest(
     config: ForestConfig,
     observations: &[NumericVectorView<'_>],
     targets: &RegressionTargets,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: SupervisedCriterion,
@@ -114,6 +119,7 @@ pub fn fit_vector_regression_forest(
                 membership,
                 root_observations,
                 distance_catalog,
+                distance_sampling,
                 available_dimensions,
                 exemplar_count,
                 criterion,
@@ -132,7 +138,8 @@ pub fn fit_multivariate_regression_forest(
     config: ForestConfig,
     observations: &[MultivariateSeriesView<'_>],
     targets: &RegressionTargets,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     exemplar_count: usize,
     criterion: SupervisedCriterion,
 ) -> CoreResult<RegressionForest> {
@@ -153,6 +160,7 @@ pub fn fit_multivariate_regression_forest(
                 membership,
                 root_observations,
                 distance_catalog,
+                distance_sampling,
                 dimensions,
                 exemplar_count,
                 criterion,
@@ -170,7 +178,8 @@ pub fn fit_multivariate_regression_forest(
 pub fn fit_vector_isolation_forest(
     config: ForestConfig,
     observations: &[NumericVectorView<'_>],
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: IsolationCriterion,
@@ -190,6 +199,7 @@ pub fn fit_vector_isolation_forest(
                 membership,
                 root_observations,
                 distance_catalog,
+                distance_sampling,
                 available_dimensions,
                 exemplar_count,
                 criterion,
@@ -207,7 +217,8 @@ pub fn fit_vector_isolation_forest(
 pub fn fit_multivariate_isolation_forest(
     config: ForestConfig,
     observations: &[MultivariateSeriesView<'_>],
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     exemplar_count: usize,
     criterion: IsolationCriterion,
 ) -> CoreResult<IsolationForest> {
@@ -227,6 +238,7 @@ pub fn fit_multivariate_isolation_forest(
                 membership,
                 root_observations,
                 distance_catalog,
+                distance_sampling,
                 dimensions,
                 exemplar_count,
                 criterion,

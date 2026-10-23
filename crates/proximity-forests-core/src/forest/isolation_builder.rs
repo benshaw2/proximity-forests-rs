@@ -1,13 +1,12 @@
 //! Iterative isolation-tree entry points.
 
-use crate::{
-    CoreResult, DistanceConfig, ForestConfig, IsolationCriterion, MultivariateSeriesView,
-    NumericVectorView,
-};
-
 use super::{
     CandidateSelectionContext, LeafPayload, NodeMembership, ObservationIndex, ProximityTree,
     TreeWorkspace, build_tree_iterative, select_multivariate_isolation, select_vector_isolation,
+};
+use crate::{
+    CoreResult, DistanceChoice, DistanceSamplingContext, ForestConfig, IsolationCriterion,
+    MultivariateSeriesView, NumericVectorView,
 };
 
 /// Builds one vector-layout isolation tree iteratively.
@@ -17,7 +16,8 @@ pub fn build_vector_isolation_tree(
     observations: &[NumericVectorView<'_>],
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: IsolationCriterion,
@@ -37,6 +37,7 @@ pub fn build_vector_isolation_tree(
                 criterion,
                 CandidateSelectionContext {
                     distance_catalog,
+                    distance_sampling,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count,
@@ -56,14 +57,15 @@ pub fn build_vector_isolation_tree(
     )
 }
 
-/// Builds one multivariate isolation tree iteratively.
+/// Builds one multivariate-layout isolation tree iteratively.
 pub fn build_multivariate_isolation_tree(
     config: &ForestConfig,
     tree_index: usize,
     observations: &[MultivariateSeriesView<'_>],
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: IsolationCriterion,
@@ -83,6 +85,7 @@ pub fn build_multivariate_isolation_tree(
                 criterion,
                 CandidateSelectionContext {
                     distance_catalog,
+                    distance_sampling,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count,

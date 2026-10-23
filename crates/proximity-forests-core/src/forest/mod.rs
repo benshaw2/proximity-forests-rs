@@ -36,7 +36,10 @@ mod tree;
 mod weighted_sampler;
 mod workspace;
 
-pub use apply::{ForestApplyResult, apply_multivariate_many, apply_vector_many};
+pub use apply::{
+    AppliedLeafId, ForestApplyResult, ForestApplyWithDepths, apply_multivariate_many,
+    apply_multivariate_many_with_depths, apply_vector_many, apply_vector_many_with_depths,
+};
 pub use batch_predict::{
     anomaly_scores_multivariate_many, anomaly_scores_vector_many,
     predict_multivariate_classification_many, predict_multivariate_regression_many,

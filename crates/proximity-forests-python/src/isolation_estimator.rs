@@ -3,7 +3,9 @@
 use std::num::NonZeroUsize;
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
-use proximity_forests_core::{DistanceConfig, IsolationCriterion, NumericVectorView};
+use proximity_forests_core::{
+    DistanceChoice, DistanceSamplingContext, IsolationCriterion, NumericVectorView,
+};
 
 use proximity_forests_core::forest::{
     DimensionSelection, ForestConfig, IsolationForest, anomaly_scores_vector_many,
@@ -12,7 +14,7 @@ use proximity_forests_core::forest::{
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::error::core_error;
+use crate::{distance_spec::parse_vector_catalog, error::core_error};
 
 /// Rust-backed isolation estimator used by the public Python wrapper.
 #[pyclass(name = "_NativeProximityIsolationForest")]
@@ -25,6 +27,7 @@ pub struct NativeProximityIsolationForest {
     bootstrap: bool,
     random_state: u64,
     n_jobs: usize,
+    distance_catalog: Box<[DistanceChoice]>,
     model: Option<IsolationForest>,
     n_features_in: Option<usize>,
 }
@@ -34,7 +37,7 @@ impl NativeProximityIsolationForest {
     #[new]
     #[pyo3(signature = (n_estimators=100, n_candidates=5, n_exemplars=2,
         max_depth=None, min_samples_split=2, bootstrap=false,
-        random_state=0, n_jobs=0))]
+        random_state=0, n_jobs=0, distances=vec![String::from("squared_euclidean")]))]
     fn new(
         n_estimators: usize,
         n_candidates: usize,
@@ -44,6 +47,7 @@ impl NativeProximityIsolationForest {
         bootstrap: bool,
         random_state: u64,
         n_jobs: usize,
+        distances: Vec<String>,
     ) -> PyResult<Self> {
         if n_estimators == 0 || n_candidates == 0 || n_exemplars == 0 || min_samples_split == 0 {
             return Err(PyValueError::new_err(
@@ -59,6 +63,7 @@ impl NativeProximityIsolationForest {
             bootstrap,
             random_state,
             n_jobs,
+            distance_catalog: parse_vector_catalog(distances)?,
             model: None,
             n_features_in: None,
         })
@@ -77,6 +82,7 @@ impl NativeProximityIsolationForest {
                 "n_exemplars cannot exceed the number of fitting samples",
             ));
         }
+        let distance_sampling = vector_sampling_context(x.as_array())?;
         let rows = copy_rows(x.as_array());
         let views: Vec<_> = rows
             .iter()
@@ -93,11 +99,11 @@ impl NativeProximityIsolationForest {
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
         config.dimension_selection = DimensionSelection::All;
 
-        let catalog = [DistanceConfig::SquaredEuclidean];
         let model = fit_vector_isolation_forest(
             config,
             &views,
-            &catalog,
+            &self.distance_catalog,
+            distance_sampling,
             shape[1],
             self.n_exemplars,
             IsolationCriterion::MinChild,
@@ -134,7 +140,7 @@ impl NativeProximityIsolationForest {
         &self,
         py: Python<'py>,
         x: PyReadonlyArray2<'py, f64>,
-    ) -> PyResult<Bound<'py, PyArray2<usize>>> {
+    ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         self.validate_features(x.shape())?;
         let rows = copy_rows(x.as_array());
         let views: Vec<_> = rows
@@ -146,7 +152,7 @@ impl NativeProximityIsolationForest {
             .map_err(core_error)?;
         let array = numpy::ndarray::Array2::from_shape_vec(
             (result.sample_count(), result.tree_count()),
-            result.leaf_indices().to_vec(),
+            result.into_leaf_indices().into_vec(),
         )
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(array.into_pyarray(py))
@@ -169,6 +175,33 @@ impl NativeProximityIsolationForest {
         }
         Ok(())
     }
+}
+
+fn vector_sampling_context(
+    array: numpy::ndarray::ArrayView2<'_, f64>,
+) -> PyResult<DistanceSamplingContext> {
+    let mut count = 0_u64;
+    let mut mean = 0.0;
+    let mut sum_squared_deviations = 0.0;
+
+    for &value in array {
+        if !value.is_finite() {
+            return Err(PyValueError::new_err(
+                "X must contain only finite values for distance-parameter sampling",
+            ));
+        }
+        count += 1;
+        let delta = value - mean;
+        mean += delta / count as f64;
+        sum_squared_deviations += delta * (value - mean);
+    }
+
+    let population_standard_deviation = if count == 0 {
+        0.0
+    } else {
+        (sum_squared_deviations / count as f64).sqrt()
+    };
+    DistanceSamplingContext::new(array.ncols(), population_standard_deviation).map_err(core_error)
 }
 
 fn copy_rows(array: numpy::ndarray::ArrayView2<'_, f64>) -> Vec<Vec<f64>> {

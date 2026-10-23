@@ -18,6 +18,13 @@ impl ModelRng {
         Self { state: seed }
     }
 
+    /// Samples uniformly from the half-open interval `[0, 1)`.
+    #[must_use]
+    pub fn unit_f64(&mut self) -> f64 {
+        const SCALE: f64 = 1.0 / ((1_u64 << 53) as f64);
+        ((self.next_u64() >> 11) as f64) * SCALE
+    }
+
     /// Returns the next uniformly distributed 64-bit value.
     #[must_use]
     pub fn next_u64(&mut self) -> u64 {

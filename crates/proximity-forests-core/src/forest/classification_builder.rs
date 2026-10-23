@@ -1,8 +1,8 @@
 //! Iterative classification-tree entry points.
 
 use crate::{
-    ClassificationTargets, CoreResult, DistanceConfig, ForestConfig, MultivariateSeriesView,
-    NumericVectorView, SupervisedCriterion,
+    ClassificationTargets, CoreResult, DistanceChoice, DistanceSamplingContext, ForestConfig,
+    MultivariateSeriesView, NumericVectorView, SupervisedCriterion,
 };
 
 use super::{
@@ -19,7 +19,8 @@ pub fn build_vector_classification_tree(
     targets: &ClassificationTargets,
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     criterion: SupervisedCriterion,
     workspace: &mut TreeWorkspace,
@@ -42,6 +43,7 @@ pub fn build_vector_classification_tree(
                 criterion,
                 CandidateSelectionContext {
                     distance_catalog,
+                    distance_sampling,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count: 1,
@@ -71,7 +73,8 @@ pub fn build_multivariate_classification_tree(
     targets: &ClassificationTargets,
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
-    distance_catalog: &[DistanceConfig],
+    distance_catalog: &[DistanceChoice],
+    distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     criterion: SupervisedCriterion,
     workspace: &mut TreeWorkspace,
@@ -94,6 +97,7 @@ pub fn build_multivariate_classification_tree(
                 criterion,
                 CandidateSelectionContext {
                     distance_catalog,
+                    distance_sampling,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count: 1,

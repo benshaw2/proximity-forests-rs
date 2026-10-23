@@ -8,6 +8,7 @@ use pyo3::exceptions::PyValueError;
 ///
 /// Python arrays are copied once before releasing the GIL. The Rust core then
 /// owns fitted observations, so no Python or NumPy lifetime crosses fitting.
+#[allow(dead_code)] // Activated by the upcoming native float32/float64 input dispatch.
 #[derive(Debug)]
 pub enum MatrixInput {
     F32 {
@@ -22,6 +23,7 @@ pub enum MatrixInput {
     },
 }
 
+#[allow(dead_code)] // Activated by the upcoming native float32/float64 input dispatch.
 impl MatrixInput {
     pub fn from_f32(array: PyReadonlyArray2<'_, f32>) -> PyResult<Self> {
         let shape = array.shape();
@@ -63,6 +65,7 @@ impl MatrixInput {
     }
 }
 
+#[allow(dead_code)] // Used by the upcoming unified NumPy input boundary.
 fn validate_shape(shape: &[usize]) -> PyResult<()> {
     if shape.len() != 2 || shape[0] == 0 || shape[1] == 0 {
         return Err(PyValueError::new_err(

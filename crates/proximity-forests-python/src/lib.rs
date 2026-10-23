@@ -1,6 +1,7 @@
 //! Python extension module for proximity-forests.
 
 mod classifier;
+mod distance_spec;
 mod error;
 mod input;
 mod isolation_estimator;
