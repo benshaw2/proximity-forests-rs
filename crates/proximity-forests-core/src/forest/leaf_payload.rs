@@ -40,6 +40,54 @@ impl ClassificationLeaf {
         })
     }
 
+    /// Reconstructs a classification leaf from validated persisted counts.
+    pub(crate) fn from_counts(counts: Vec<Vec<(u32, usize)>>) -> CoreResult<Self> {
+        if counts.is_empty() {
+            return Err(CoreError::invalid_data(
+                "classification leaf requires at least one output",
+            ));
+        }
+        for output_counts in &counts {
+            if output_counts.is_empty() {
+                return Err(CoreError::invalid_data(
+                    "each classification output requires at least one represented class",
+                ));
+            }
+            let mut previous = None;
+            let mut total = 0usize;
+            for &(class_id, occurrence_count) in output_counts {
+                if occurrence_count == 0 {
+                    return Err(CoreError::invalid_data(
+                        "classification class counts must be positive",
+                    ));
+                }
+                if previous.is_some_and(|value| class_id <= value) {
+                    return Err(CoreError::invalid_data(
+                        "classification class identifiers must be strictly increasing",
+                    ));
+                }
+                total = total.checked_add(occurrence_count).ok_or_else(|| {
+                    CoreError::invalid_data("classification class count overflowed usize")
+                })?;
+                previous = Some(class_id);
+            }
+            if total == 0 {
+                return Err(CoreError::invalid_data(
+                    "classification output requires at least one occurrence",
+                ));
+            }
+        }
+        Ok(Self {
+            output_count: counts.len(),
+            counts,
+        })
+    }
+
+    /// Returns all sorted class-count collections in output order.
+    pub(crate) fn all_counts(&self) -> &[Vec<(u32, usize)>] {
+        &self.counts
+    }
+
     /// Returns the number of outputs.
     #[must_use]
     pub const fn output_count(&self) -> usize {
@@ -86,6 +134,21 @@ impl RegressionLeaf {
             }
             #[allow(clippy::cast_precision_loss)]
             means.push(weighted_sum / membership.occurrence_count() as f64);
+        }
+        Ok(Self { means })
+    }
+
+    /// Reconstructs a regression leaf from validated persisted means.
+    pub(crate) fn from_means(means: Vec<f64>) -> CoreResult<Self> {
+        if means.is_empty() {
+            return Err(CoreError::invalid_data(
+                "regression leaf requires at least one output",
+            ));
+        }
+        if means.iter().any(|value| !value.is_finite()) {
+            return Err(CoreError::invalid_data(
+                "regression leaf means must be finite",
+            ));
         }
         Ok(Self { means })
     }

@@ -51,6 +51,56 @@ impl BootstrapSample {
         }
     }
 
+    /// Reconstructs a bootstrap sample from persisted ownership components.
+    pub(crate) fn from_parts(
+        sampled_positions: Vec<usize>,
+        multiplicities: Vec<usize>,
+        out_of_bag_positions: Vec<usize>,
+    ) -> CoreResult<Self> {
+        let sample_count = multiplicities.len();
+        if sample_count == 0 {
+            return Err(CoreError::invalid_data(
+                "persisted bootstrap metadata requires at least one observation",
+            ));
+        }
+        if sampled_positions.len() != sample_count {
+            return Err(CoreError::shape_mismatch(
+                "persisted bootstrap draws must equal the training sample count",
+            ));
+        }
+        let mut reconstructed = vec![0usize; sample_count];
+        for &position in &sampled_positions {
+            let count = reconstructed.get_mut(position).ok_or_else(|| {
+                CoreError::invalid_data(
+                    "a persisted bootstrap draw is outside the training collection",
+                )
+            })?;
+            *count = count.checked_add(1).ok_or_else(|| {
+                CoreError::invalid_data("persisted bootstrap multiplicity overflow")
+            })?;
+        }
+        if reconstructed != multiplicities {
+            return Err(CoreError::invalid_data(
+                "persisted bootstrap multiplicities do not match the sampled draws",
+            ));
+        }
+        let expected_out_of_bag: Vec<_> = multiplicities
+            .iter()
+            .enumerate()
+            .filter_map(|(position, &count)| (count == 0).then_some(position))
+            .collect();
+        if out_of_bag_positions != expected_out_of_bag {
+            return Err(CoreError::invalid_data(
+                "persisted out-of-bag positions do not match bootstrap multiplicities",
+            ));
+        }
+        Ok(Self {
+            sampled_positions,
+            multiplicities,
+            out_of_bag_positions,
+        })
+    }
+
     /// Returns the tree-local sampled positions, including repeated draws.
     #[must_use]
     pub fn sampled_positions(&self) -> &[usize] {
@@ -67,6 +117,15 @@ impl BootstrapSample {
     #[must_use]
     pub fn out_of_bag_positions(&self) -> &[usize] {
         &self.out_of_bag_positions
+    }
+    /// Consumes the sample and returns its three ownership components.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+        (
+            self.sampled_positions,
+            self.multiplicities,
+            self.out_of_bag_positions,
+        )
     }
 }
 
@@ -92,5 +151,10 @@ mod tests {
         assert_eq!(sample.sampled_positions(), &[0, 1, 2, 3]);
         assert_eq!(sample.multiplicities(), &[1, 1, 1, 1]);
         assert!(sample.out_of_bag_positions().is_empty());
+    }
+    #[test]
+    fn persisted_parts_are_validated() {
+        assert!(BootstrapSample::from_parts(vec![0, 0, 2], vec![2, 0, 1], vec![1],).is_ok());
+        assert!(BootstrapSample::from_parts(vec![0, 0, 2], vec![1, 1, 1], Vec::new(),).is_err());
     }
 }

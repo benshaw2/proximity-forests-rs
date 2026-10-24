@@ -5,6 +5,8 @@
 /IMPLEMENTATION_PLAN.txt
 /DISTANCE_OPTIMIZATION_BACKLOG.md
 /DISTANCES.md
+/serialization_artifacts/
+practical_test.py
 
 # RustRover / IntelliJ local workspace state
 /.idea/

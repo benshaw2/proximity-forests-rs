@@ -41,13 +41,13 @@ pub fn predict_forest_vector_classification(
     query: NumericVectorView<'_>,
     prediction_seed: u64,
 ) -> CoreResult<ForestClassificationPrediction> {
-    let OwnedObservationStore::Vector(store) = model.forest().observations() else {
-        return Err(layout_error("vector classification"));
-    };
-    let views = store.views();
     let mut scratch = DistanceScratch::new();
     let mut predictions = Vec::with_capacity(model.forest().trees().len());
     for (tree_index, tree) in model.forest().trees().iter().enumerate() {
+        let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+            return Err(layout_error("vector tree exemplars"));
+        };
+        let views = store.views();
         predictions.push(predict_vector_classification(
             tree,
             query,
@@ -66,13 +66,13 @@ pub fn predict_forest_multivariate_classification(
     query: MultivariateSeriesView<'_>,
     prediction_seed: u64,
 ) -> CoreResult<ForestClassificationPrediction> {
-    let OwnedObservationStore::Multivariate(store) = model.forest().observations() else {
-        return Err(layout_error("multivariate classification"));
-    };
-    let views = store.views()?;
     let mut scratch = DistanceScratch::new();
     let mut predictions = Vec::with_capacity(model.forest().trees().len());
     for (tree_index, tree) in model.forest().trees().iter().enumerate() {
+        let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+            return Err(layout_error("multivariate tree exemplars"));
+        };
+        let views = store.views()?;
         predictions.push(predict_multivariate_classification(
             tree,
             query,
@@ -91,13 +91,13 @@ pub fn predict_forest_vector_regression(
     query: NumericVectorView<'_>,
     prediction_seed: u64,
 ) -> CoreResult<Vec<f64>> {
-    let OwnedObservationStore::Vector(store) = model.forest().observations() else {
-        return Err(layout_error("vector regression"));
-    };
-    let views = store.views();
     let mut scratch = DistanceScratch::new();
     let mut sums = vec![0.0; model.output_count()];
     for (tree_index, tree) in model.forest().trees().iter().enumerate() {
+        let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+            return Err(layout_error("vector tree exemplars"));
+        };
+        let views = store.views();
         let values = predict_vector_regression(
             tree,
             query,
@@ -118,13 +118,13 @@ pub fn predict_forest_multivariate_regression(
     query: MultivariateSeriesView<'_>,
     prediction_seed: u64,
 ) -> CoreResult<Vec<f64>> {
-    let OwnedObservationStore::Multivariate(store) = model.forest().observations() else {
-        return Err(layout_error("multivariate regression"));
-    };
-    let views = store.views()?;
     let mut scratch = DistanceScratch::new();
     let mut sums = vec![0.0; model.output_count()];
     for (tree_index, tree) in model.forest().trees().iter().enumerate() {
+        let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+            return Err(layout_error("multivariate tree exemplars"));
+        };
+        let views = store.views()?;
         let values = predict_multivariate_regression(
             tree,
             query,
@@ -145,13 +145,13 @@ pub fn predict_forest_vector_isolation(
     query: NumericVectorView<'_>,
     prediction_seed: u64,
 ) -> CoreResult<IsolationPrediction> {
-    let OwnedObservationStore::Vector(store) = model.forest().observations() else {
-        return Err(layout_error("vector isolation"));
-    };
-    let views = store.views();
     let mut scratch = DistanceScratch::new();
     let mut path_sum = 0.0;
     for (tree_index, tree) in model.forest().trees().iter().enumerate() {
+        let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+            return Err(layout_error("vector tree exemplars"));
+        };
+        let views = store.views();
         path_sum += predict_vector_isolation(
             tree,
             query,
@@ -172,13 +172,13 @@ pub fn predict_forest_multivariate_isolation(
     query: MultivariateSeriesView<'_>,
     prediction_seed: u64,
 ) -> CoreResult<IsolationPrediction> {
-    let OwnedObservationStore::Multivariate(store) = model.forest().observations() else {
-        return Err(layout_error("multivariate isolation"));
-    };
-    let views = store.views()?;
     let mut scratch = DistanceScratch::new();
     let mut path_sum = 0.0;
     for (tree_index, tree) in model.forest().trees().iter().enumerate() {
+        let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+            return Err(layout_error("multivariate tree exemplars"));
+        };
+        let views = store.views()?;
         path_sum += predict_multivariate_isolation(
             tree,
             query,

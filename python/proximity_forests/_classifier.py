@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 
 from ._core import _NativeProximityForestClassifier
-from ._distances import normalize_vector_distances
+from ._distances import normalize_distances
 
 
 class ProximityForestClassifier:
@@ -27,6 +27,7 @@ class ProximityForestClassifier:
         bootstrap: bool = True,
         random_state: int | None = None,
         n_jobs: int | None = None,
+        data_retention: str = "exemplars",
     ) -> None:
         self.n_estimators = n_estimators
         self.n_candidates = n_candidates
@@ -36,58 +37,106 @@ class ProximityForestClassifier:
         self.bootstrap = bootstrap
         self.random_state = random_state
         self.n_jobs = n_jobs
+        self.data_retention = data_retention
 
     def fit(self, X, y):
-        X = self._validate_X(X)
+        X, layout = self._validate_X(X)
+        n_cases = len(X) if layout == "unequal_multivariate" else X.shape[0]
         y = np.asarray(y)
-        if y.ndim not in (1, 2):
-            raise ValueError("y must be one- or two-dimensional")
-        if y.shape[0] != X.shape[0]:
-            raise ValueError("X and y contain different numbers of samples")
-        if y.ndim == 2 and y.shape[1] == 0:
-            raise ValueError("y must contain at least one classification output")
-
+        if y.ndim not in (1, 2) or y.shape[0] != n_cases:
+            raise ValueError("y must be one- or two-dimensional with one row per case")
         self._target_was_1d = y.ndim == 1
         target_matrix = y.reshape(-1, 1) if self._target_was_1d else y
-        classes = []
-        encoded_columns = []
+        classes, encoded = [], []
         for output in range(target_matrix.shape[1]):
-            output_classes, encoded = np.unique(
-                target_matrix[:, output], return_inverse=True
-            )
-            if output_classes.size < 2:
-                raise ValueError(
-                    f"classification output {output} requires at least two classes"
-                )
-            classes.append(output_classes)
-            encoded_columns.append(np.asarray(encoded, dtype=np.uint32))
-
-        encoded_matrix = np.ascontiguousarray(
-            np.column_stack(encoded_columns), dtype=np.uint32
+            values, inverse = np.unique(target_matrix[:, output], return_inverse=True)
+            if len(values) < 2:
+                raise ValueError(f"classification output {output} requires at least two classes")
+            classes.append(values)
+            encoded.append(inverse.astype(np.uint32, copy=False))
+        encoded_y = np.ascontiguousarray(np.column_stack(encoded), dtype=np.uint32)
+        distance_layout = "multivariate" if layout == "unequal_multivariate" else layout
+        distances = list(normalize_distances(self.distances, layout=distance_layout))
+        self._native = _NativeProximityForestClassifier(
+            n_estimators=int(self.n_estimators), n_candidates=int(self.n_candidates),
+            max_depth=self.max_depth, min_samples_split=int(self.min_samples_split),
+            bootstrap=bool(self.bootstrap), random_state=0 if self.random_state is None else int(self.random_state),
+            n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
+            data_retention=str(self.data_retention), distances=distances,
         )
-        class_counts = [int(output_classes.size) for output_classes in classes]
-
-        if self._target_was_1d:
-            self.target_type_ = "binary" if class_counts[0] == 2 else "multiclass"
-            self.classes_ = classes[0]
-            self.n_classes_ = class_counts[0]
+        if layout == "unequal_multivariate":
+            self._native.fit_unequal(X, encoded_y, [len(v) for v in classes])
+            self.n_channels_in_, self.n_timepoints_in_ = X[0].shape[0], None
+        elif layout == "multivariate":
+            self._native.fit_multivariate(X, encoded_y, [len(v) for v in classes])
+            self.n_channels_in_, self.n_timepoints_in_ = X.shape[1:]
         else:
-            is_binary_indicator = all(count == 2 for count in class_counts)
-            if is_binary_indicator:
-                try:
-                    is_binary_indicator = bool(
-                        np.isin(target_matrix, (0, 1, False, True)).all()
-                    )
-                except TypeError:
-                    is_binary_indicator = False
-            self.target_type_ = (
-                "multilabel-indicator"
-                if is_binary_indicator
-                else "multiclass-multioutput"
-            )
-            self.classes_ = classes
-            self.n_classes_ = class_counts
+            self._native.fit(X, encoded_y, [len(v) for v in classes])
+        self.input_layout_ = layout
+        self.classes_ = classes[0] if self._target_was_1d else classes
+        self.n_classes_ = len(classes[0]) if self._target_was_1d else [len(v) for v in classes]
+        self.n_outputs_ = len(classes)
+        if self._target_was_1d:
+            self.target_type_ = "binary" if len(classes[0]) == 2 else "multiclass"
+        elif np.issubdtype(target_matrix.dtype, np.integer) and np.all((target_matrix == 0) | (target_matrix == 1)):
+            self.target_type_ = "multilabel-indicator"
+        else:
+            self.target_type_ = "multiclass-multioutput"
+        self.n_features_in_ = X[0].shape[0] if layout == "unequal_multivariate" else X.shape[1]
+        self.data_retention_ = str(self.data_retention)
+        return self
 
+    def predict(self, X):
+        native = self._check_is_fitted()
+        X, layout = self._validate_X(X)
+        if layout != self.input_layout_:
+            raise ValueError("X layout does not match the fitted model")
+        if layout == "unequal_multivariate":
+            encoded = native.predict_unequal(X) if self._target_was_1d else native.predict_unequal_matrix(X)
+        elif layout == "multivariate":
+            encoded = native.predict_multivariate(X) if self._target_was_1d else native.predict_multivariate_matrix(X)
+        else:
+            encoded = native.predict(X) if self._target_was_1d else native.predict_matrix(X)
+        if self._target_was_1d:
+            return self.classes_[np.asarray(encoded, dtype=np.intp)]
+        encoded = np.asarray(encoded, dtype=np.intp)
+        return np.column_stack([self.classes_[i][encoded[:, i]] for i in range(self.n_outputs_)])
+
+    def predict_proba(self, X):
+        native = self._check_is_fitted()
+        X, layout = self._validate_X(X)
+        if layout != self.input_layout_:
+            raise ValueError("X layout does not match the fitted model")
+        if layout == "unequal_multivariate":
+            call = native.predict_unequal_proba_output
+        elif layout == "multivariate":
+            call = native.predict_multivariate_proba_output
+        else:
+            call = native.predict_proba_output
+        probabilities = [call(X, output) for output in range(self.n_outputs_)]
+        return probabilities[0] if self._target_was_1d else probabilities
+
+    def apply(self, X):
+        native = self._check_is_fitted()
+        X, layout = self._validate_X(X)
+        if layout != self.input_layout_:
+            raise ValueError("X layout does not match the fitted model")
+        if layout == "unequal_multivariate":
+            return native.apply_unequal(X)
+        return native.apply_multivariate(X) if layout == "multivariate" else native.apply(X)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        native = state.pop("_native", None)
+        state["_native_payload"] = None if native is None else bytes(native.to_bytes())
+        return state
+
+    def __setstate__(self, state):
+        payload = state.pop("_native_payload", None)
+        self.__dict__.update(state)
+        if payload is None:
+            self._native = None
+            return
         self._native = _NativeProximityForestClassifier(
             n_estimators=int(self.n_estimators),
             n_candidates=int(self.n_candidates),
@@ -96,41 +145,46 @@ class ProximityForestClassifier:
             bootstrap=bool(self.bootstrap),
             random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
-            distances=list(normalize_vector_distances(self.distances)),
+            data_retention=str(self.data_retention),
+            distances=list(normalize_distances(self.distances, layout=("multivariate" if getattr(self, "input_layout_", "vector") == "unequal_multivariate" else getattr(self, "input_layout_", "vector")))),
         )
-        self._native.fit(X, encoded_matrix, class_counts)
-        self.n_features_in_ = self._native.n_features_in_
-        self.n_outputs_ = self._native.n_outputs_
-        return self
+        class_counts = (
+            [int(self.n_classes_)]
+            if self._target_was_1d
+            else [int(value) for value in self.n_classes_]
+        )
+        self._native.load_bytes(
+            payload,
+            int(self.n_features_in_),
+            class_counts,
+            getattr(self, "n_channels_in_", None),
+            getattr(self, "n_timepoints_in_", None),
+        )
 
-    def predict(self, X):
-        native = self._check_is_fitted()
-        X = self._validate_X(X)
-        if self._target_was_1d:
-            encoded = np.asarray(native.predict(X), dtype=np.int64)
-            return self.classes_[encoded]
 
-        encoded = np.asarray(native.predict_matrix(X), dtype=np.int64)
-        decoded_columns = [
-            output_classes[encoded[:, output]]
-            for output, output_classes in enumerate(self.classes_)
-        ]
-        return np.column_stack(decoded_columns)
+    @property
+    def has_training_data_(self):
+        """Whether fitted training observations remain reachable by the model."""
+        self._check_is_fitted()
+        return getattr(self, "data_retention_", self.data_retention) != "exemplars"
 
-    def predict_proba(self, X):
-        native = self._check_is_fitted()
-        X = self._validate_X(X)
-        if self._target_was_1d:
-            return np.asarray(native.predict_proba_output(X, 0))
-        return [
-            np.asarray(native.predict_proba_output(X, output))
-            for output in range(self.n_outputs_)
-        ]
+    @property
+    def has_embedded_training_data_(self):
+        """Whether the fitted artifact embeds a complete training-data copy."""
+        self._check_is_fitted()
+        return getattr(self, "data_retention_", self.data_retention) == "copy"
 
-    def apply(self, X):
-        """Return terminal node indices with shape ``(n_samples, n_trees)``."""
-        native = self._check_is_fitted()
-        return np.asarray(native.apply(self._validate_X(X)))
+    @property
+    def supports_proximities_(self):
+        """Whether tree leaf assignments can be used to derive proximities."""
+        self._check_is_fitted()
+        return True
+
+    @property
+    def supports_self_contained_imputation_(self):
+        """Whether the artifact embeds all training values needed for imputation."""
+        self._check_is_fitted()
+        return getattr(self, "data_retention_", self.data_retention) == "copy"
 
     def get_params(self, deep: bool = True):
         del deep
@@ -143,6 +197,7 @@ class ProximityForestClassifier:
             "bootstrap": self.bootstrap,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,
+            "data_retention": self.data_retention,
         }
 
     def set_params(self, **params):
@@ -154,13 +209,56 @@ class ProximityForestClassifier:
         return self
 
     @staticmethod
+    @staticmethod
     def _validate_X(X):
+        if isinstance(X, (list, tuple)):
+            if len(X) < 2:
+                raise ValueError("unequal-length X must contain at least two cases")
+            cases = [np.asarray(case) for case in X]
+            ranks = {case.ndim for case in cases}
+            if not ranks.issubset({1, 2}) or len(ranks) != 1:
+                raise ValueError(
+                    "unequal-length X must contain either all 1D or all 2D arrays"
+                )
+            if 1 in ranks:
+                cases = [case.reshape(1, -1) for case in cases]
+            if any(case.shape[0] == 0 or case.shape[1] == 0 for case in cases):
+                raise ValueError("unequal-length cases must have nonempty axes")
+            channels = cases[0].shape[0]
+            if any(case.shape[0] != channels for case in cases):
+                raise ValueError(
+                    "all unequal-length cases must have the same channel count"
+                )
+            dtype = (
+                np.float32
+                if all(case.dtype == np.float32 for case in cases)
+                else np.float64
+            )
+            normalized = [
+                np.ascontiguousarray(case, dtype=dtype) for case in cases
+            ]
+            return normalized, "unequal_multivariate"
+
         X = np.asarray(X)
-        if X.ndim != 2 or X.shape[0] == 0 or X.shape[1] == 0:
-            raise ValueError("X must be a nonempty two-dimensional array")
+        if X.ndim == 2:
+            if X.shape[0] < 2 or X.shape[1] == 0:
+                raise ValueError(
+                    "2D X must contain at least two cases and one feature or timepoint"
+                )
+            layout = "vector"
+        elif X.ndim == 3:
+            if X.shape[0] < 2 or X.shape[1] == 0 or X.shape[2] == 0:
+                raise ValueError(
+                    "3D X must have nonempty shape (cases, channels, timepoints)"
+                )
+            layout = "multivariate"
+        else:
+            raise ValueError(
+                "X must be a 2D/3D NumPy array or a list of 1D/2D arrays"
+            )
         if X.dtype not in (np.float32, np.float64):
             X = X.astype(np.float64)
-        return np.ascontiguousarray(X, dtype=np.float64)
+        return np.ascontiguousarray(X), layout
 
     def _check_is_fitted(self):
         native = getattr(self, "_native", None)

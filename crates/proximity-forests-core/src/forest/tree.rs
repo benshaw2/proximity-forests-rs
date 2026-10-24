@@ -2,7 +2,7 @@
 
 use crate::{DistanceConfig, NodeMembership};
 
-use super::LeafPayload;
+use super::{LeafPayload, OwnedObservationStore};
 
 /// Stable index of one fitted tree node.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -40,23 +40,53 @@ impl ObservationIndex {
     }
 }
 
+/// Stable index into one fitted tree's model-owned exemplar store.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ExemplarId(u32);
+
+impl ExemplarId {
+    /// Creates a durable exemplar identifier.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Creates a compact identifier from a platform-sized index.
+    #[must_use]
+    pub fn try_from_index(value: usize) -> Option<Self> {
+        u32::try_from(value).ok().map(Self)
+    }
+
+    /// Returns the compact underlying identifier.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// Returns the identifier as a platform-sized index.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// One exemplar branch stored by an internal node.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ExemplarBranch {
-    exemplar: ObservationIndex,
+    exemplar: ExemplarId,
     child: NodeId,
 }
 
 impl ExemplarBranch {
     /// Creates one exemplar-to-child branch.
     #[must_use]
-    pub const fn new(exemplar: ObservationIndex, child: NodeId) -> Self {
+    pub const fn new(exemplar: ExemplarId, child: NodeId) -> Self {
         Self { exemplar, child }
     }
 
-    /// Returns the exemplar's training-observation index.
+    /// Returns the durable tree-local exemplar identifier.
     #[must_use]
-    pub const fn exemplar(self) -> ObservationIndex {
+    pub const fn exemplar(self) -> ExemplarId {
         self.exemplar
     }
 
@@ -134,6 +164,29 @@ impl LeafNode {
         Self::new(membership, LeafPayload::Empty)
     }
 
+    /// Reconstructs a fitted leaf from validated persisted state.
+    pub(crate) fn from_parts(
+        occurrence_count: usize,
+        distinct_count: usize,
+        payload: LeafPayload,
+    ) -> crate::CoreResult<Self> {
+        if occurrence_count == 0 {
+            return Err(crate::CoreError::invalid_data(
+                "a fitted leaf requires at least one occurrence",
+            ));
+        }
+        if distinct_count == 0 || distinct_count > occurrence_count {
+            return Err(crate::CoreError::invalid_data(
+                "leaf distinct count must be positive and no greater than occurrence count",
+            ));
+        }
+        Ok(Self {
+            occurrence_count,
+            distinct_count,
+            payload,
+        })
+    }
+
     /// Returns the number of bootstrap occurrences reaching the leaf.
     #[must_use]
     pub const fn occurrence_count(&self) -> usize {
@@ -170,13 +223,44 @@ pub enum TreeNode {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProximityTree {
     nodes: Vec<TreeNode>,
+    exemplars: Option<OwnedObservationStore>,
 }
 
 impl ProximityTree {
     /// Creates an empty tree arena.
     #[must_use]
     pub const fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+            exemplars: None,
+        }
+    }
+
+    /// Attaches immutable tree-local exemplar values after construction.
+    pub fn set_exemplars(&mut self, exemplars: OwnedObservationStore) {
+        self.exemplars = Some(exemplars);
+    }
+
+    /// Returns tree-local model-owned exemplar values.
+    #[must_use]
+    pub const fn exemplars(&self) -> Option<&OwnedObservationStore> {
+        self.exemplars.as_ref()
+    }
+
+    /// Reconstructs a fitted tree from a validated node arena and exemplar store.
+    pub(crate) fn from_parts(
+        nodes: Vec<TreeNode>,
+        exemplars: OwnedObservationStore,
+    ) -> crate::CoreResult<Self> {
+        if nodes.is_empty() {
+            return Err(crate::CoreError::invalid_data(
+                "a fitted tree requires at least one node",
+            ));
+        }
+        Ok(Self {
+            nodes,
+            exemplars: Some(exemplars),
+        })
     }
 
     /// Returns the number of fitted nodes.

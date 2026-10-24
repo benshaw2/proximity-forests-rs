@@ -137,3 +137,15 @@ def test_estimator_parameter_protocol_without_sklearn():
     assert model.max_depth == 8
     with pytest.raises(ValueError, match="Invalid parameter"):
         model.set_params(unknown_parameter=True)
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_classifier_supports_native_float_dtypes(dtype):
+    X, y = toy_data()
+    X = np.ascontiguousarray(X, dtype=dtype)
+    model = ProximityForestClassifier(
+        n_estimators=5, bootstrap=False, random_state=41
+    ).fit(X, y)
+    assert model.predict(X).shape == (X.shape[0],)
+    assert model.predict_proba(X).shape == (X.shape[0], 2)
+    assert model.apply(X).dtype == np.uint32
+

@@ -36,6 +36,11 @@ pub fn parse_vector_catalog(tokens: Vec<String>) -> PyResult<Box<[DistanceChoice
     parse_catalog(tokens, CatalogLayout::Vector)
 }
 
+/// Parses a distance catalog for multivariate series input.
+pub fn parse_multivariate_catalog(tokens: Vec<String>) -> PyResult<Box<[DistanceChoice]>> {
+    parse_catalog(tokens, CatalogLayout::Multivariate)
+}
+
 fn parse_choice(token: &str, layout: CatalogLayout) -> PyResult<DistanceChoice> {
     let (raw_name, query) = token.split_once('?').unwrap_or((token, ""));
     let name = normalize(raw_name);

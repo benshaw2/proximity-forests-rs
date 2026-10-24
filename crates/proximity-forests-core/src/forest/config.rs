@@ -4,6 +4,8 @@ use std::num::NonZeroUsize;
 
 use crate::{CoreError, CoreResult, DimensionSelection, IsolationCriterion, SupervisedCriterion};
 
+use super::{DataRetention, ExternalTrainingData};
+
 /// Randomized tie behavior used by branch assignment and prediction.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TiePolicy {
@@ -34,6 +36,10 @@ pub struct ForestConfig {
     pub early_abandoning: bool,
     /// Policy used for equal minimum distances.
     pub branch_tie_policy: TiePolicy,
+    /// Fitted-model retention policy for the complete training collection.
+    pub data_retention: DataRetention,
+    /// Persistent descriptor required by reference retention.
+    pub external_training_data: Option<ExternalTrainingData>,
 }
 
 impl ForestConfig {
@@ -50,6 +56,8 @@ impl ForestConfig {
             seed,
             early_abandoning: true,
             branch_tie_policy: TiePolicy::Random,
+            data_retention: DataRetention::Exemplars,
+            external_training_data: None,
         }
     }
 
@@ -61,6 +69,21 @@ impl ForestConfig {
     /// maximum depth of zero.
     pub fn validate(&self) -> CoreResult<()> {
         self.dimension_selection.validate()?;
+        if self.data_retention == DataRetention::Reference && self.external_training_data.is_none()
+        {
+            return Err(CoreError::invalid_configuration(
+                "external_training_data",
+                "reference retention requires an external training-data descriptor",
+            ));
+        }
+
+        if self.data_retention != DataRetention::Reference && self.external_training_data.is_some()
+        {
+            return Err(CoreError::invalid_configuration(
+                "external_training_data",
+                "external training-data descriptors require reference retention",
+            ));
+        }
         if self.maximum_depth == Some(0) {
             return Err(CoreError::invalid_configuration(
                 "maximum_depth",

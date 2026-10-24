@@ -7,9 +7,10 @@ use crate::{
 };
 
 use super::{
-    ClassificationForest, FittedForest, IsolationForest, NodeMembership, ObservationIndex,
-    OwnedMultivariateStore, OwnedObservationStore, OwnedVectorStore, RegressionForest,
-    TreeWorkspace, build_multivariate_classification_tree, build_multivariate_isolation_tree,
+    BootstrapSample, ClassificationForest, DataRetention, FittedForest, IsolationForest,
+    NodeMembership, ObservationIndex, OwnedMultivariateStore, OwnedObservationStore,
+    OwnedVectorStore, RegressionForest, RetainedTrainingData, TrainingMetadata, TreeWorkspace,
+    build_multivariate_classification_tree, build_multivariate_isolation_tree,
     build_multivariate_regression_tree, build_vector_classification_tree,
     build_vector_isolation_tree, build_vector_regression_tree, parallel_indexed,
 };
@@ -26,9 +27,8 @@ pub fn fit_vector_classification_forest(
 ) -> CoreResult<ClassificationForest> {
     validate_counts(observations.len(), targets.sample_count())?;
     config.validate()?;
-    let store = OwnedVectorStore::from_views(observations)?;
     let trees = {
-        let views = store.views();
+        let views = observations;
         parallel_indexed(config.tree_count.get(), 0, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
@@ -48,7 +48,12 @@ pub fn fit_vector_classification_forest(
         })?
     };
     Ok(ClassificationForest::new(
-        FittedForest::new(config, trees, OwnedObservationStore::Vector(store)),
+        FittedForest::new(
+            config.clone(),
+            trees,
+            retain_vector(&config, observations)?,
+            training_metadata(&config, observations.len())?,
+        ),
         targets.output_count(),
     ))
 }
@@ -64,10 +69,20 @@ pub fn fit_multivariate_classification_forest(
 ) -> CoreResult<ClassificationForest> {
     validate_counts(observations.len(), targets.sample_count())?;
     config.validate()?;
-    let store = OwnedMultivariateStore::from_views(observations)?;
-    let dimensions = store.dimension_count();
+    let dimensions = observations
+        .first()
+        .ok_or_else(|| CoreError::invalid_data("forest fitting requires at least one observation"))?
+        .dimension_count();
+    if observations
+        .iter()
+        .any(|observation| observation.dimension_count() != dimensions)
+    {
+        return Err(CoreError::shape_mismatch(
+            "multivariate observations must have one common channel count",
+        ));
+    }
     let trees = {
-        let views = store.views()?;
+        let views = observations;
         parallel_indexed(config.tree_count.get(), 0, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
@@ -87,7 +102,12 @@ pub fn fit_multivariate_classification_forest(
         })?
     };
     Ok(ClassificationForest::new(
-        FittedForest::new(config, trees, OwnedObservationStore::Multivariate(store)),
+        FittedForest::new(
+            config.clone(),
+            trees,
+            retain_multivariate(&config, observations)?,
+            training_metadata(&config, observations.len())?,
+        ),
         targets.output_count(),
     ))
 }
@@ -105,9 +125,8 @@ pub fn fit_vector_regression_forest(
 ) -> CoreResult<RegressionForest> {
     validate_counts(observations.len(), targets.sample_count())?;
     config.validate()?;
-    let store = OwnedVectorStore::from_views(observations)?;
     let trees = {
-        let views = store.views();
+        let views = observations;
         parallel_indexed(config.tree_count.get(), 0, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
@@ -128,7 +147,12 @@ pub fn fit_vector_regression_forest(
         })?
     };
     Ok(RegressionForest::new(
-        FittedForest::new(config, trees, OwnedObservationStore::Vector(store)),
+        FittedForest::new(
+            config.clone(),
+            trees,
+            retain_vector(&config, observations)?,
+            training_metadata(&config, observations.len())?,
+        ),
         targets.output_count(),
     ))
 }
@@ -145,10 +169,20 @@ pub fn fit_multivariate_regression_forest(
 ) -> CoreResult<RegressionForest> {
     validate_counts(observations.len(), targets.sample_count())?;
     config.validate()?;
-    let store = OwnedMultivariateStore::from_views(observations)?;
-    let dimensions = store.dimension_count();
+    let dimensions = observations
+        .first()
+        .ok_or_else(|| CoreError::invalid_data("forest fitting requires at least one observation"))?
+        .dimension_count();
+    if observations
+        .iter()
+        .any(|observation| observation.dimension_count() != dimensions)
+    {
+        return Err(CoreError::shape_mismatch(
+            "multivariate observations must have one common channel count",
+        ));
+    }
     let trees = {
-        let views = store.views()?;
+        let views = observations;
         parallel_indexed(config.tree_count.get(), 0, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
@@ -169,7 +203,12 @@ pub fn fit_multivariate_regression_forest(
         })?
     };
     Ok(RegressionForest::new(
-        FittedForest::new(config, trees, OwnedObservationStore::Multivariate(store)),
+        FittedForest::new(
+            config.clone(),
+            trees,
+            retain_multivariate(&config, observations)?,
+            training_metadata(&config, observations.len())?,
+        ),
         targets.output_count(),
     ))
 }
@@ -185,10 +224,9 @@ pub fn fit_vector_isolation_forest(
     criterion: IsolationCriterion,
 ) -> CoreResult<IsolationForest> {
     config.validate()?;
-    let store = OwnedVectorStore::from_views(observations)?;
     let normalization_size = observations.len();
     let trees = {
-        let views = store.views();
+        let views = observations;
         parallel_indexed(config.tree_count.get(), 0, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
@@ -208,7 +246,12 @@ pub fn fit_vector_isolation_forest(
         })?
     };
     Ok(IsolationForest::new(
-        FittedForest::new(config, trees, OwnedObservationStore::Vector(store)),
+        FittedForest::new(
+            config.clone(),
+            trees,
+            retain_vector(&config, observations)?,
+            training_metadata(&config, observations.len())?,
+        ),
         normalization_size,
     ))
 }
@@ -223,11 +266,21 @@ pub fn fit_multivariate_isolation_forest(
     criterion: IsolationCriterion,
 ) -> CoreResult<IsolationForest> {
     config.validate()?;
-    let store = OwnedMultivariateStore::from_views(observations)?;
-    let dimensions = store.dimension_count();
+    let dimensions = observations
+        .first()
+        .ok_or_else(|| CoreError::invalid_data("forest fitting requires at least one observation"))?
+        .dimension_count();
+    if observations
+        .iter()
+        .any(|observation| observation.dimension_count() != dimensions)
+    {
+        return Err(CoreError::shape_mismatch(
+            "multivariate observations must have one common channel count",
+        ));
+    }
     let normalization_size = observations.len();
     let trees = {
-        let views = store.views()?;
+        let views = observations;
         parallel_indexed(config.tree_count.get(), 0, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
@@ -247,9 +300,75 @@ pub fn fit_multivariate_isolation_forest(
         })?
     };
     Ok(IsolationForest::new(
-        FittedForest::new(config, trees, OwnedObservationStore::Multivariate(store)),
+        FittedForest::new(
+            config.clone(),
+            trees,
+            retain_multivariate(&config, observations)?,
+            training_metadata(&config, observations.len())?,
+        ),
         normalization_size,
     ))
+}
+
+fn retain_vector(
+    config: &ForestConfig,
+    observations: &[NumericVectorView<'_>],
+) -> CoreResult<RetainedTrainingData> {
+    match config.data_retention {
+        DataRetention::Copy => Ok(RetainedTrainingData::Owned(OwnedObservationStore::Vector(
+            OwnedVectorStore::from_views(observations)?,
+        ))),
+        DataRetention::Exemplars => Ok(RetainedTrainingData::None),
+        DataRetention::Reference => Ok(RetainedTrainingData::Reference(
+            config.external_training_data.clone().ok_or_else(|| {
+                CoreError::invalid_configuration(
+                    "external_training_data",
+                    "reference retention requires an external training-data descriptor",
+                )
+            })?,
+        )),
+    }
+}
+
+fn retain_multivariate(
+    config: &ForestConfig,
+    observations: &[MultivariateSeriesView<'_>],
+) -> CoreResult<RetainedTrainingData> {
+    match config.data_retention {
+        DataRetention::Copy => Ok(RetainedTrainingData::Owned(
+            OwnedObservationStore::Multivariate(OwnedMultivariateStore::from_views(observations)?),
+        )),
+        DataRetention::Exemplars => Ok(RetainedTrainingData::None),
+        DataRetention::Reference => Ok(RetainedTrainingData::Reference(
+            config.external_training_data.clone().ok_or_else(|| {
+                CoreError::invalid_configuration(
+                    "external_training_data",
+                    "reference retention requires an external training-data descriptor",
+                )
+            })?,
+        )),
+    }
+}
+
+fn training_metadata(config: &ForestConfig, sample_count: usize) -> CoreResult<TrainingMetadata> {
+    let samples = (0..config.tree_count.get())
+        .map(|tree_index| bootstrap_sample(config, tree_index, sample_count))
+        .collect::<CoreResult<Vec<_>>>()?;
+    Ok(TrainingMetadata::new(sample_count, samples))
+}
+
+fn bootstrap_sample(
+    config: &ForestConfig,
+    tree_index: usize,
+    sample_count: usize,
+) -> CoreResult<BootstrapSample> {
+    if config.bootstrap {
+        let tree_seed = SeedMixer::tree(config.seed, tree_index);
+        let seed = SeedMixer::node_purpose(tree_seed, 0, RandomPurpose::Bootstrap);
+        BootstrapSample::draw(sample_count, &mut ModelRng::from_seed(seed))
+    } else {
+        Ok(BootstrapSample::identity(sample_count))
+    }
 }
 
 fn root_membership(

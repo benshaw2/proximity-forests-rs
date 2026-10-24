@@ -89,15 +89,15 @@ pub fn apply_vector_many(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyResult> {
-    let OwnedObservationStore::Vector(store) = forest.observations() else {
-        return Err(layout_error("vector"));
-    };
-    let exemplars = store.views();
     let rows = parallel_indexed(queries.len(), thread_count, |sample| {
         let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
         let mut scratch = DistanceScratch::new();
         let mut leaves = Vec::with_capacity(forest.trees().len());
         for (tree_index, tree) in forest.trees().iter().enumerate() {
+            let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+                return Err(layout_error("vector tree exemplars"));
+            };
+            let exemplars = store.views();
             let visit = traverse_vector(
                 tree,
                 queries[sample],
@@ -120,15 +120,15 @@ pub fn apply_multivariate_many(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyResult> {
-    let OwnedObservationStore::Multivariate(store) = forest.observations() else {
-        return Err(layout_error("multivariate"));
-    };
-    let exemplars = store.views()?;
     let rows = parallel_indexed(queries.len(), thread_count, |sample| {
         let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
         let mut scratch = DistanceScratch::new();
         let mut leaves = Vec::with_capacity(forest.trees().len());
         for (tree_index, tree) in forest.trees().iter().enumerate() {
+            let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+                return Err(layout_error("multivariate tree exemplars"));
+            };
+            let exemplars = store.views()?;
             let visit = traverse_multivariate(
                 tree,
                 queries[sample],
@@ -151,16 +151,16 @@ pub fn apply_vector_many_with_depths(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyWithDepths> {
-    let OwnedObservationStore::Vector(store) = forest.observations() else {
-        return Err(layout_error("vector"));
-    };
-    let exemplars = store.views();
     let rows = parallel_indexed(queries.len(), thread_count, |sample| {
         let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
         let mut scratch = DistanceScratch::new();
         let mut leaves = Vec::with_capacity(forest.trees().len());
         let mut depths = Vec::with_capacity(forest.trees().len());
         for (tree_index, tree) in forest.trees().iter().enumerate() {
+            let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+                return Err(layout_error("vector tree exemplars"));
+            };
+            let exemplars = store.views();
             let visit = traverse_vector(
                 tree,
                 queries[sample],
@@ -184,16 +184,16 @@ pub fn apply_multivariate_many_with_depths(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyWithDepths> {
-    let OwnedObservationStore::Multivariate(store) = forest.observations() else {
-        return Err(layout_error("multivariate"));
-    };
-    let exemplars = store.views()?;
     let rows = parallel_indexed(queries.len(), thread_count, |sample| {
         let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
         let mut scratch = DistanceScratch::new();
         let mut leaves = Vec::with_capacity(forest.trees().len());
         let mut depths = Vec::with_capacity(forest.trees().len());
         for (tree_index, tree) in forest.trees().iter().enumerate() {
+            let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+                return Err(layout_error("multivariate tree exemplars"));
+            };
+            let exemplars = store.views()?;
             let visit = traverse_multivariate(
                 tree,
                 queries[sample],

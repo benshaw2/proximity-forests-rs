@@ -111,3 +111,14 @@ def test_regressor_parameter_protocol():
     assert model.get_params()["n_exemplars"] == 2
     assert model.set_params(max_depth=6) is model
     assert model.max_depth == 6
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_regressor_supports_native_float_dtypes(dtype):
+    X, y = toy_data()
+    X = np.ascontiguousarray(X, dtype=dtype)
+    model = ProximityForestRegressor(
+        n_estimators=5, n_exemplars=2, bootstrap=False, random_state=43
+    ).fit(X, y)
+    assert model.predict(X).shape == (X.shape[0],)
+    assert model.apply(X).dtype == np.uint32
+

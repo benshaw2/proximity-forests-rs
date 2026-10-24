@@ -30,6 +30,7 @@ mod regression_builder;
 mod regression_predict;
 mod router;
 mod scorer;
+mod serialization;
 mod stopping;
 mod task_selector;
 mod tree;
@@ -68,7 +69,8 @@ pub use config::{
 pub use dimension_sampler::sample_dimensions;
 pub use dimension_selection::DimensionSelection;
 pub use exemplar_store::{
-    OwnedMultivariateStore, OwnedObservationStore, OwnedSeries, OwnedVectorStore,
+    MultivariateExemplarBuilder, OwnedMultivariateStore, OwnedObservationStore, OwnedSeries,
+    OwnedVectorStore, VectorExemplarBuilder,
 };
 pub use forest_builder::{
     fit_multivariate_classification_forest, fit_multivariate_isolation_forest,
@@ -87,7 +89,10 @@ pub use isolation_predict::{
     predict_vector_isolation,
 };
 pub use leaf_payload::{ClassificationLeaf, LeafPayload, RegressionLeaf};
-pub use model::{ClassificationForest, FittedForest, IsolationForest, RegressionForest};
+pub use model::{
+    ClassificationForest, DataRetention, ExternalDataFormat, ExternalTrainingData, FittedForest,
+    IsolationForest, RegressionForest, RetainedTrainingData, TrainingMetadata,
+};
 pub use node_membership::{NodeMembership, SampleId};
 pub use parallel::{Shared, parallel_indexed};
 pub use partition::{CandidatePartition, GroupedPartition};
@@ -103,8 +108,8 @@ pub use task_selector::{
     select_vector_regression,
 };
 pub use tree::{
-    ExemplarBranch, LeafNode, NodeId, NodeWork, ObservationIndex, ProximityTree, SplitNode,
-    TreeBuildStack, TreeNode,
+    ExemplarBranch, ExemplarId, LeafNode, NodeId, NodeWork, ObservationIndex, ProximityTree,
+    SplitNode, TreeBuildStack, TreeNode,
 };
 pub use weighted_sampler::sample_weighted_without_replacement;
 pub use workspace::TreeWorkspace;

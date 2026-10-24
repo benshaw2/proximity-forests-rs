@@ -137,10 +137,10 @@ fn route_split_vector(
         tie_policy,
         prediction_seed,
         |branch, cutoff| {
-            let exemplar_index = split.branches()[branch].exemplar().get();
+            let exemplar_index = split.branches()[branch].exemplar().index();
             let exemplar = observations.get(exemplar_index).copied().ok_or_else(|| {
                 CoreError::invalid_data(format!(
-                    "exemplar observation {exemplar_index} is outside vector observation count {}",
+                    "tree exemplar {exemplar_index} is outside vector exemplar count {}",
                     observations.len()
                 ))
             })?;
@@ -166,13 +166,13 @@ fn route_split_multivariate(
         tie_policy,
         prediction_seed,
         |branch, cutoff| {
-            let exemplar_index = split.branches()[branch].exemplar().get();
+            let exemplar_index = split.branches()[branch].exemplar().index();
             let exemplar = observations.get(exemplar_index).copied().ok_or_else(|| {
-            CoreError::invalid_data(format!(
-                "exemplar observation {exemplar_index} is outside multivariate observation count {}",
-                observations.len()
-            ))
-        })?;
+                CoreError::invalid_data(format!(
+                    "tree exemplar {exemplar_index} is outside multivariate exemplar count {}",
+                    observations.len()
+                ))
+            })?;
             evaluator.evaluate_multivariate(query, exemplar, selected, cutoff, scratch)
         },
     )

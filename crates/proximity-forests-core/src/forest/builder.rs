@@ -3,8 +3,8 @@
 use crate::{CoreError, CoreResult, ForestConfig, SeedMixer};
 
 use super::{
-    ExemplarBranch, LeafNode, LeafPayload, NodeId, NodeMembership, ObservationIndex, ProximityTree,
-    SelectedCandidate, SplitNode, TreeNode, TreeWorkspace, build_child_memberships,
+    ExemplarBranch, ExemplarId, LeafNode, LeafPayload, NodeId, NodeMembership, ObservationIndex,
+    ProximityTree, SelectedCandidate, SplitNode, TreeNode, TreeWorkspace, build_child_memberships,
     stopping_reason,
 };
 
@@ -26,13 +26,14 @@ struct BuildWork {
 ///
 /// Returns an error for invalid mappings, callback failures, malformed winning
 /// candidates, or child-construction failures.
-pub fn build_tree_iterative<Select, MakeLeaf>(
+pub fn build_tree_iterative<Select, CommitExemplars, MakeLeaf>(
     config: &ForestConfig,
     tree_index: usize,
     root_membership: NodeMembership,
     root_observations: Vec<ObservationIndex>,
     workspace: &mut TreeWorkspace,
     mut select: Select,
+    mut commit_exemplars: CommitExemplars,
     mut leaf: MakeLeaf,
 ) -> CoreResult<ProximityTree>
 where
@@ -44,6 +45,7 @@ where
         &[ObservationIndex],
         &mut TreeWorkspace,
     ) -> CoreResult<Option<SelectedCandidate>>,
+    CommitExemplars: FnMut(&[ObservationIndex]) -> CoreResult<Vec<ExemplarId>>,
     MakeLeaf: FnMut(&NodeMembership, &[ObservationIndex]) -> CoreResult<LeafPayload>,
 {
     if root_observations.len() != root_membership.distinct_count() {
@@ -91,13 +93,19 @@ where
             ));
         }
         let children = build_child_memberships(&work.membership, &work.observations, &partition)?;
-        let (distance, selected_dimensions, exemplars) = candidate.into_parts();
+        let durable_exemplars = commit_exemplars(candidate.exemplars())?;
+        if durable_exemplars.len() != candidate.branch_count() {
+            return Err(CoreError::shape_mismatch(
+                "committed exemplar count does not match the winning candidate",
+            ));
+        }
+        let (distance, selected_dimensions, _observations) = candidate.into_parts();
         let mut branches = Vec::with_capacity(children.len());
         let mut pending = Vec::with_capacity(children.len());
         for (branch, child) in children.into_iter().enumerate() {
             let (membership, observations) = child.into_parts();
             let child_id = tree.push(TreeNode::Leaf(LeafNode::placeholder(&membership)));
-            branches.push(ExemplarBranch::new(exemplars[branch], child_id));
+            branches.push(ExemplarBranch::new(durable_exemplars[branch], child_id));
             pending.push(BuildWork {
                 node: child_id,
                 depth: work.depth + 1,
@@ -157,6 +165,7 @@ mod tests {
             vec![ObservationIndex::new(0), ObservationIndex::new(1)],
             &mut TreeWorkspace::new(),
             |_tree_seed, _depth, _path, _membership, _observations, _workspace| Ok(None),
+            |_observations| Ok(Vec::new()),
             |_membership, _observations| Ok(LeafPayload::Empty),
         )
         .expect("tree");

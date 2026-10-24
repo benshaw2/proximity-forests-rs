@@ -15,6 +15,9 @@ default = ["parallel"]
 parallel = []
 
 [dependencies]
+crc32fast = "1"
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 

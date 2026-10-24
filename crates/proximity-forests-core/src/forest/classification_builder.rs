@@ -6,8 +6,9 @@ use crate::{
 };
 
 use super::{
-    CandidateSelectionContext, ClassificationLeaf, LeafPayload, NodeMembership, ObservationIndex,
-    ProximityTree, TreeWorkspace, build_tree_iterative, classification_node_is_pure,
+    CandidateSelectionContext, ClassificationLeaf, LeafPayload, MultivariateExemplarBuilder,
+    NodeMembership, ObservationIndex, OwnedObservationStore, ProximityTree, TreeWorkspace,
+    VectorExemplarBuilder, build_tree_iterative, classification_node_is_pure,
     select_multivariate_classification, select_vector_classification,
 };
 
@@ -25,7 +26,8 @@ pub fn build_vector_classification_tree(
     criterion: SupervisedCriterion,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
-    build_tree_iterative(
+    let mut exemplar_builder = VectorExemplarBuilder::new(observations[0].scalar_kind());
+    let mut tree = build_tree_iterative(
         config,
         tree_index,
         root_membership,
@@ -55,6 +57,19 @@ pub fn build_vector_classification_tree(
                 workspace,
             )
         },
+        |selected| {
+            selected
+                .iter()
+                .map(|index| {
+                    let observation = observations.get(index.get()).copied().ok_or_else(|| {
+                        crate::CoreError::invalid_data(
+                            "selected exemplar observation was unavailable",
+                        )
+                    })?;
+                    exemplar_builder.push(observation)
+                })
+                .collect()
+        },
         |membership, node_observations| {
             Ok(LeafPayload::Classification(ClassificationLeaf::from_node(
                 membership,
@@ -62,7 +77,9 @@ pub fn build_vector_classification_tree(
                 targets,
             )?))
         },
-    )
+    )?;
+    tree.set_exemplars(OwnedObservationStore::Vector(exemplar_builder.finish()));
+    Ok(tree)
 }
 
 /// Builds one multivariate classification tree iteratively.
@@ -79,7 +96,11 @@ pub fn build_multivariate_classification_tree(
     criterion: SupervisedCriterion,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
-    build_tree_iterative(
+    let mut exemplar_builder = MultivariateExemplarBuilder::new(
+        observations[0].scalar_kind(),
+        observations[0].dimension_count(),
+    );
+    let mut tree = build_tree_iterative(
         config,
         tree_index,
         root_membership,
@@ -109,6 +130,19 @@ pub fn build_multivariate_classification_tree(
                 workspace,
             )
         },
+        |selected| {
+            selected
+                .iter()
+                .map(|index| {
+                    let observation = observations.get(index.get()).copied().ok_or_else(|| {
+                        crate::CoreError::invalid_data(
+                            "selected exemplar observation was unavailable",
+                        )
+                    })?;
+                    exemplar_builder.push(observation)
+                })
+                .collect()
+        },
         |membership, node_observations| {
             Ok(LeafPayload::Classification(ClassificationLeaf::from_node(
                 membership,
@@ -116,5 +150,9 @@ pub fn build_multivariate_classification_tree(
                 targets,
             )?))
         },
-    )
+    )?;
+    tree.set_exemplars(OwnedObservationStore::Multivariate(
+        exemplar_builder.finish(),
+    ));
+    Ok(tree)
 }

@@ -57,3 +57,13 @@ def test_invalid_contamination_is_rejected():
     X = toy_data()
     with pytest.raises(ValueError, match="contamination"):
         ProximityIsolationForest(contamination=0.75).fit(X)
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_isolation_supports_native_float_dtypes(dtype):
+    X = np.ascontiguousarray(toy_data(), dtype=dtype)
+    model = ProximityIsolationForest(
+        n_estimators=5, bootstrap=False, random_state=47
+    ).fit(X)
+    assert model.anomaly_score(X).shape == (X.shape[0],)
+    assert model.apply(X).dtype == np.uint32
+

@@ -1,8 +1,9 @@
 //! Iterative regression-tree entry points.
 
 use super::{
-    CandidateSelectionContext, LeafPayload, NodeMembership, ObservationIndex, ProximityTree,
-    RegressionLeaf, TreeWorkspace, build_tree_iterative, select_multivariate_regression,
+    CandidateSelectionContext, LeafPayload, MultivariateExemplarBuilder, NodeMembership,
+    ObservationIndex, OwnedObservationStore, ProximityTree, RegressionLeaf, TreeWorkspace,
+    VectorExemplarBuilder, build_tree_iterative, select_multivariate_regression,
     select_vector_regression,
 };
 use crate::{
@@ -25,7 +26,8 @@ pub fn build_vector_regression_tree(
     criterion: SupervisedCriterion,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
-    build_tree_iterative(
+    let mut exemplar_builder = VectorExemplarBuilder::new(observations[0].scalar_kind());
+    let mut tree = build_tree_iterative(
         config,
         tree_index,
         root_membership,
@@ -52,6 +54,19 @@ pub fn build_vector_regression_tree(
                 workspace,
             )
         },
+        |selected| {
+            selected
+                .iter()
+                .map(|index| {
+                    let observation = observations.get(index.get()).copied().ok_or_else(|| {
+                        crate::CoreError::invalid_data(
+                            "selected exemplar observation was unavailable",
+                        )
+                    })?;
+                    exemplar_builder.push(observation)
+                })
+                .collect()
+        },
         |membership, node_observations| {
             Ok(LeafPayload::Regression(RegressionLeaf::from_node(
                 membership,
@@ -59,7 +74,9 @@ pub fn build_vector_regression_tree(
                 targets,
             )?))
         },
-    )
+    )?;
+    tree.set_exemplars(OwnedObservationStore::Vector(exemplar_builder.finish()));
+    Ok(tree)
 }
 
 /// Builds one multivariate-layout regression tree iteratively.
@@ -77,7 +94,11 @@ pub fn build_multivariate_regression_tree(
     criterion: SupervisedCriterion,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
-    build_tree_iterative(
+    let mut exemplar_builder = MultivariateExemplarBuilder::new(
+        observations[0].scalar_kind(),
+        observations[0].dimension_count(),
+    );
+    let mut tree = build_tree_iterative(
         config,
         tree_index,
         root_membership,
@@ -104,6 +125,19 @@ pub fn build_multivariate_regression_tree(
                 workspace,
             )
         },
+        |selected| {
+            selected
+                .iter()
+                .map(|index| {
+                    let observation = observations.get(index.get()).copied().ok_or_else(|| {
+                        crate::CoreError::invalid_data(
+                            "selected exemplar observation was unavailable",
+                        )
+                    })?;
+                    exemplar_builder.push(observation)
+                })
+                .collect()
+        },
         |membership, node_observations| {
             Ok(LeafPayload::Regression(RegressionLeaf::from_node(
                 membership,
@@ -111,5 +145,9 @@ pub fn build_multivariate_regression_tree(
                 targets,
             )?))
         },
-    )
+    )?;
+    tree.set_exemplars(OwnedObservationStore::Multivariate(
+        exemplar_builder.finish(),
+    ));
+    Ok(tree)
 }
