@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use proximity_forests_core::{
-    DistanceChoice, DistanceConfig, DtwParameters, ErpParameters, FiniteF64, LcssParameters,
-    MsmParameters, SampledDistanceFamily, ShapeDtwParameters, TweParameters, WeightedDtwParameters,
+    DistanceChoice, DistanceConfig, DtwArowParameters, DtwParameters, ErpParameters, FiniteF64,
+    LcssParameters, MsmParameters, NoOverlapPolicy, SampledDistanceFamily, ShapeDtwParameters,
+    TweParameters, WeightedDtwParameters,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::{PyErr, PyResult};
@@ -147,6 +148,10 @@ fn parse_fixed(name: &str, p: &HashMap<String, String>) -> PyResult<DistanceConf
         "msm" => DistanceConfig::Msm(msm()?),
         "twe" => DistanceConfig::Twe(twe()?),
         "shape_hog_1d_dtw" | "shapehog1ddtw" => DistanceConfig::ShapeHog1dDtw(shape()?),
+        "nan_squared_euclidean" | "nan_euclidean" => DistanceConfig::NaNSquaredEuclidean {
+            no_overlap: no_overlap_policy(p)?,
+        },
+        "dtw_arow" => DistanceConfig::DtwArow(DtwArowParameters { window: window(p)? }),
         "squared_euclidean_i" | "euclidean_i" | "ed_i" => {
             DistanceConfig::SquaredEuclideanIndependent
         }
@@ -162,11 +167,20 @@ fn parse_fixed(name: &str, p: &HashMap<String, String>) -> PyResult<DistanceConf
         "msm_i" => DistanceConfig::MsmIndependent(msm()?),
         "twe_i" => DistanceConfig::TweIndependent(twe()?),
         "shape_hog_1d_dtw_i" => DistanceConfig::ShapeHog1dDtwIndependent(shape()?),
+        "nan_squared_euclidean_i" | "nan_euclidean_i" => {
+            DistanceConfig::NaNSquaredEuclideanIndependent {
+                no_overlap: no_overlap_policy(p)?,
+            }
+        }
+        "dtw_arow_i" => {
+            DistanceConfig::DtwArowIndependent(DtwArowParameters { window: window(p)? })
+        }
         "dtw_d" => DistanceConfig::DtwDependent(dtw()?),
         "ddtw_d" => DistanceConfig::DdtwDependent(dtw()?),
         "wdtw_d" => DistanceConfig::WdtwDependent(weighted()?),
         "wddtw_d" => DistanceConfig::WddtwDependent(weighted()?),
         "shape_hog_dtw" | "shape_hog_dtw_d" => DistanceConfig::ShapeHogDtw(shape()?),
+        "dtw_arow_d" => DistanceConfig::DtwArowDependent(DtwArowParameters { window: window(p)? }),
         _ => return Err(unsupported_distance(name)),
     })
 }
@@ -210,9 +224,12 @@ fn validate_parameter_names(name: &str, p: &HashMap<String, String>) -> PyResult
         "lcss" | "lcss_i" => &["window", "epsilon"],
         "msm" | "msm_i" => &["cost"],
         "twe" | "twe_i" => &["stiffness", "penalty"],
-        "shape_hog_1d_dtw" | "shape_hog_1d_dtw_i" | "shape_hog_dtw" | "shape_hog_dtw_d" => {
-            &["window"]
-        }
+        "shape_hog_1d_dtw" | "shape_hog_1d_dtw_i" | "shape_hog_dtw" | "shape_hog_dtw_d"
+        | "dtw_arow" | "dtw_arow_i" | "dtw_arow_d" => &["window"],
+        "nan_squared_euclidean"
+        | "nan_euclidean"
+        | "nan_squared_euclidean_i"
+        | "nan_euclidean_i" => &["no_overlap"],
         _ => &[],
     };
     if let Some(key) = p.keys().find(|key| !allowed.contains(&key.as_str())) {
@@ -246,4 +263,41 @@ fn normalize(name: &str) -> String {
 }
 fn unsupported_distance(token: &str) -> PyErr {
     PyValueError::new_err(format!("unsupported distance {token:?}; see DISTANCES.md"))
+}
+
+fn no_overlap_policy(p: &HashMap<String, String>) -> PyResult<NoOverlapPolicy> {
+    match p
+        .get("no_overlap")
+        .map(String::as_str)
+        .unwrap_or("infinite")
+    {
+        "infinite" => Ok(NoOverlapPolicy::Infinite),
+        "zero" => Ok(NoOverlapPolicy::Zero),
+        value => Err(PyValueError::new_err(format!(
+            "no_overlap must be 'infinite' or 'zero'; received {value:?}"
+        ))),
+    }
+}
+
+/// Rejects catalogs that could select a non-missing-compatible distance when
+/// the current input contains NaN. Complete input accepts any valid mixture.
+pub fn validate_missing_compatibility(
+    catalog: &[DistanceChoice],
+    contains_nan: bool,
+) -> PyResult<()> {
+    if !contains_nan {
+        return Ok(());
+    }
+    for choice in catalog {
+        let compatible = match choice {
+            DistanceChoice::Fixed(config) => config.capabilities().missing_values,
+            DistanceChoice::Sampled(_) => false,
+        };
+        if !compatible {
+            return Err(PyValueError::new_err(
+                "X contains NaN, so every configured distance must support missing values",
+            ));
+        }
+    }
+    Ok(())
 }

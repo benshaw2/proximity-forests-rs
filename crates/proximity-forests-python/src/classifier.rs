@@ -16,7 +16,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
 use crate::{
-    distance_spec::{parse_multivariate_catalog, parse_vector_catalog},
+    distance_spec::{
+        parse_multivariate_catalog, parse_vector_catalog, validate_missing_compatibility,
+    },
     error::core_error,
     input::{MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention},
 };
@@ -134,6 +136,7 @@ impl NativeProximityForestClassifier {
         class_counts: Vec<usize>,
     ) -> PyResult<()> {
         let input = MatrixInput::extract(x)?;
+        input.contains_nan()?;
         let target_shape = y.shape();
         if target_shape[0] != input.rows() {
             return Err(PyValueError::new_err(
@@ -170,6 +173,7 @@ impl NativeProximityForestClassifier {
         }
         let distance_sampling = input.sampling_context()?;
         let distance_catalog = parse_vector_catalog(self.distance_tokens.to_vec())?;
+        validate_missing_compatibility(&distance_catalog, input.contains_nan()?)?;
         let target_values = y.as_array().iter().copied().collect();
         let targets = ClassificationTargets::new(target_values, target_shape[0], target_shape[1])
             .map_err(core_error)?;
@@ -226,6 +230,7 @@ impl NativeProximityForestClassifier {
             ClassificationTargets::new(y.as_array().iter().copied().collect(), shape[0], shape[1])
                 .map_err(core_error)?;
         let catalog = parse_multivariate_catalog(self.distance_tokens.to_vec())?;
+        validate_missing_compatibility(&catalog, input.contains_nan()?)?;
         let sampling = input.sampling_context()?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).expect("validated positive"),
@@ -323,6 +328,7 @@ impl NativeProximityForestClassifier {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         let input = SeriesArrayInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_multivariate_shape(input.channels(), input.timepoints())?;
         let model = self.model.as_ref().ok_or_else(not_fitted)?;
         let result = input.with_series_views(|views| {
@@ -369,6 +375,7 @@ impl NativeProximityForestClassifier {
             ClassificationTargets::new(y.as_array().iter().copied().collect(), shape[0], shape[1])
                 .map_err(core_error)?;
         let catalog = parse_multivariate_catalog(self.distance_tokens.to_vec())?;
+        validate_missing_compatibility(&catalog, input.contains_nan()?)?;
         let sampling = input.sampling_context()?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).expect("validated positive"),
@@ -466,6 +473,7 @@ impl NativeProximityForestClassifier {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         let input = UnequalSeriesInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_unequal_channels(input.channels())?;
         let model = self.model.as_ref().ok_or_else(not_fitted)?;
         let result = input.with_series_views(|views| {
@@ -561,6 +569,7 @@ impl NativeProximityForestClassifier {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         let input = MatrixInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_features(input.columns())?;
         let model = self.model.as_ref().ok_or_else(not_fitted)?;
         let result = input.with_vector_views(|views| {
@@ -632,6 +641,7 @@ impl NativeProximityForestClassifier {
 impl NativeProximityForestClassifier {
     fn predict_batch(&self, x: &Bound<'_, PyAny>) -> PyResult<Vec<ForestClassificationPrediction>> {
         let input = MatrixInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_features(input.columns())?;
         input.with_vector_views(|views| {
             predict_vector_classification_many(
@@ -649,6 +659,7 @@ impl NativeProximityForestClassifier {
         x: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<ForestClassificationPrediction>> {
         let input = SeriesArrayInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_multivariate_shape(input.channels(), input.timepoints())?;
         input.with_series_views(|views| {
             predict_multivariate_classification_many(
@@ -674,6 +685,7 @@ impl NativeProximityForestClassifier {
         x: &Bound<'_, PyAny>,
     ) -> PyResult<Vec<ForestClassificationPrediction>> {
         let input = UnequalSeriesInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_unequal_channels(input.channels())?;
         input.with_series_views(|views| {
             predict_multivariate_classification_many(

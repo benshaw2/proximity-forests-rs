@@ -4,16 +4,25 @@ build-backend = "maturin"
 
 [project]
 name = "proximity-forests"
-version = "0.1.0"
-description = "High-performance proximity forests for classification, regression, isolation, geometry, and imputation"
+version = "0.1.0a1"
+description = "Proximity forest models for classification, regression, and isolation"
+readme = "README.md"
 requires-python = ">=3.9"
+keywords = ["machine-learning", "time-series", "proximity-forest", "rust"]
 dependencies = [
     "numpy>=1.23",
 ]
 classifiers = [
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Rust",
-    "Operating System :: OS Independent",
+    "Typing :: Typed",
 ]
 
 [project.optional-dependencies]

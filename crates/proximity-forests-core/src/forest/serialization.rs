@@ -2217,4 +2217,44 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn missing_compatible_distance_configs_round_trip() {
+        use crate::distance::{DistanceConfig, DtwArowParameters, NoOverlapPolicy};
+        let configs = vec![
+            DistanceConfig::NaNSquaredEuclidean {
+                no_overlap: NoOverlapPolicy::Infinite,
+            },
+            DistanceConfig::NaNSquaredEuclidean {
+                no_overlap: NoOverlapPolicy::Zero,
+            },
+            DistanceConfig::NaNSquaredEuclideanIndependent {
+                no_overlap: NoOverlapPolicy::Infinite,
+            },
+            DistanceConfig::NaNSquaredEuclideanIndependent {
+                no_overlap: NoOverlapPolicy::Zero,
+            },
+            DistanceConfig::DtwArow(DtwArowParameters { window: None }),
+            DistanceConfig::DtwArow(DtwArowParameters { window: Some(3) }),
+            DistanceConfig::DtwArowIndependent(DtwArowParameters { window: Some(4) }),
+            DistanceConfig::DtwArowDependent(DtwArowParameters { window: Some(5) }),
+        ];
+        for config in configs {
+            let dto = DistanceConfigDtoV1::try_from(&config).expect("encode distance DTO");
+            let restored =
+                crate::distance::DistanceConfig::try_from(dto).expect("decode distance DTO");
+            assert_eq!(restored, config);
+        }
+    }
+
+    #[test]
+    fn unknown_missing_policy_is_rejected() {
+        let dto = DistanceConfigDtoV1 {
+            family: "nan_squared_euclidean".to_owned(),
+            floats: Vec::new(),
+            integers: Vec::new(),
+            flags: Vec::new(),
+            strings: vec![("no_overlap".to_owned(), "unknown".to_owned())],
+        };
+        assert!(crate::distance::DistanceConfig::try_from(dto).is_err());
+    }
 }

@@ -195,7 +195,6 @@ class ProximityIsolationForest:
             raise ValueError("contamination must be in (0, 0.5]")
 
     @staticmethod
-    @staticmethod
     def _validate_X(X):
         if isinstance(X, (list, tuple)):
             if len(X) < 2:

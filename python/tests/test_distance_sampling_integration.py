@@ -123,16 +123,17 @@ def test_sampled_catalog_is_scheduling_independent():
     np.testing.assert_array_equal(serial.predict(X), parallel.predict(X))
 
 
-def test_nonfinite_input_is_rejected_before_sampling():
+def test_nan_input_rejects_catalog_without_missing_support():
     X, y, _ = vector_data()
     X = X.copy()
     X[0, 0] = np.nan
 
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(
+        ValueError,
+        match="every configured distance must support missing values",
+    ):
         ProximityForestClassifier(
-            n_estimators=2,
-            n_candidates=2,
-            distances=["dtw"],
+            n_estimators=3,
             bootstrap=False,
-            random_state=5,
+            random_state=7,
         ).fit(X, y)

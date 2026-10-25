@@ -15,7 +15,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
 use crate::{
-    distance_spec::{parse_multivariate_catalog, parse_vector_catalog},
+    distance_spec::{
+        parse_multivariate_catalog, parse_vector_catalog, validate_missing_compatibility,
+    },
     error::core_error,
     input::{MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention},
 };
@@ -130,6 +132,7 @@ impl NativeProximityIsolationForest {
         }
         let distance_sampling = input.sampling_context()?;
         let distance_catalog = parse_vector_catalog(self.distance_tokens.to_vec())?;
+        validate_missing_compatibility(&distance_catalog, input.contains_nan()?)?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).expect("validated positive"),
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),
@@ -165,6 +168,7 @@ impl NativeProximityIsolationForest {
             return Err(PyValueError::new_err("X requires at least two cases"));
         }
         let catalog = parse_multivariate_catalog(self.distance_tokens.to_vec())?;
+        validate_missing_compatibility(&catalog, input.contains_nan()?)?;
         let sampling = input.sampling_context()?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).unwrap(),
@@ -198,6 +202,7 @@ impl NativeProximityIsolationForest {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let input = SeriesArrayInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_multivariate_shape(input.channels(), input.timepoints())?;
         let values = input.with_series_views(|views| {
             anomaly_scores_multivariate_many(
@@ -216,6 +221,7 @@ impl NativeProximityIsolationForest {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         let input = SeriesArrayInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_multivariate_shape(input.channels(), input.timepoints())?;
         let model = self.model.as_ref().ok_or_else(not_fitted)?;
         let result = input.with_series_views(|views| {
@@ -246,6 +252,7 @@ impl NativeProximityIsolationForest {
             ));
         }
         let catalog = parse_multivariate_catalog(self.distance_tokens.to_vec())?;
+        validate_missing_compatibility(&catalog, input.contains_nan()?)?;
         let sampling = input.sampling_context()?;
         let mut config = ForestConfig::new(
             NonZeroUsize::new(self.n_estimators).expect("validated positive"),
@@ -281,6 +288,7 @@ impl NativeProximityIsolationForest {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let input = UnequalSeriesInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_unequal_channels(input.channels())?;
         let values = input.with_series_views(|views| {
             anomaly_scores_multivariate_many(
@@ -300,6 +308,7 @@ impl NativeProximityIsolationForest {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         let input = UnequalSeriesInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_unequal_channels(input.channels())?;
         let model = self.model.as_ref().ok_or_else(not_fitted)?;
         let result = input.with_series_views(|views| {
@@ -321,6 +330,7 @@ impl NativeProximityIsolationForest {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let input = MatrixInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_features(input.columns())?;
         let values = input.with_vector_views(|views| {
             anomaly_scores_vector_many(
@@ -340,6 +350,7 @@ impl NativeProximityIsolationForest {
         x: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         let input = MatrixInput::extract(x)?;
+        input.contains_nan()?;
         self.validate_features(input.columns())?;
         let model = self.model.as_ref().ok_or_else(not_fitted)?;
         let result = input.with_vector_views(|views| {

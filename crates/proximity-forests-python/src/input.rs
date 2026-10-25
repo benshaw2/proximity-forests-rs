@@ -82,11 +82,11 @@ impl<'py> MatrixInput<'py> {
         }
     }
 
-    /// Reports whether the matrix contains NaN.
+    /// Reports whether the matrix contains NaN and rejects infinity.
     pub fn contains_nan(&self) -> PyResult<bool> {
         match self {
-            Self::F32(array) => Ok(array.as_slice()?.iter().any(|value| value.is_nan())),
-            Self::F64(array) => Ok(array.as_slice()?.iter().any(|value| value.is_nan())),
+            Self::F32(array) => inspect_values(array.as_slice()?.iter().map(|&v| f64::from(v))),
+            Self::F64(array) => inspect_values(array.as_slice()?.iter().copied()),
         }
     }
 
@@ -194,6 +194,14 @@ impl<'py> SeriesArrayInput<'py> {
         match self {
             Self::F32(_) => ScalarKind::F32,
             Self::F64(_) => ScalarKind::F64,
+        }
+    }
+
+    /// Reports whether any value is NaN and rejects infinity.
+    pub fn contains_nan(&self) -> PyResult<bool> {
+        match self {
+            Self::F32(array) => inspect_values(array.as_slice()?.iter().map(|&v| f64::from(v))),
+            Self::F64(array) => inspect_values(array.as_slice()?.iter().copied()),
         }
     }
 
@@ -344,6 +352,30 @@ impl<'py> UnequalSeriesInput<'py> {
         }
     }
 
+    /// Reports whether any value is NaN and rejects infinity.
+    pub fn contains_nan(&self) -> PyResult<bool> {
+        match self {
+            Self::F32(arrays) => inspect_values(
+                arrays
+                    .iter()
+                    .map(PyReadonlyArray2::as_slice)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .map(|&v| f64::from(v)),
+            ),
+            Self::F64(arrays) => inspect_values(
+                arrays
+                    .iter()
+                    .map(PyReadonlyArray2::as_slice)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .copied(),
+            ),
+        }
+    }
+
     /// Computes pooled dataset statistics without materializing a padded array.
     pub fn sampling_context(&self) -> PyResult<DistanceSamplingContext> {
         let standard_deviation = match self {
@@ -465,14 +497,30 @@ fn validate_shape(shape: &[usize]) -> PyResult<()> {
     Ok(())
 }
 
+fn inspect_values(values: impl IntoIterator<Item = f64>) -> PyResult<bool> {
+    let mut contains_nan = false;
+    for value in values {
+        if value.is_infinite() {
+            return Err(PyValueError::new_err(
+                "X may contain NaN but must not contain positive or negative infinity",
+            ));
+        }
+        contains_nan |= value.is_nan();
+    }
+    Ok(contains_nan)
+}
+
 fn population_standard_deviation(values: impl IntoIterator<Item = f64>) -> PyResult<f64> {
     let mut count = 0_u64;
     let mut mean = 0.0;
     let mut squared_deviations = 0.0;
     for value in values {
-        if !value.is_finite() {
+        if value.is_nan() {
+            continue;
+        }
+        if value.is_infinite() {
             return Err(PyValueError::new_err(
-                "X must contain only finite values for distance-parameter sampling",
+                "X may contain NaN but must not contain positive or negative infinity",
             ));
         }
         count += 1;
@@ -480,11 +528,12 @@ fn population_standard_deviation(values: impl IntoIterator<Item = f64>) -> PyRes
         mean += delta / count as f64;
         squared_deviations += delta * (value - mean);
     }
-    Ok(if count == 0 {
-        0.0
-    } else {
-        (squared_deviations / count as f64).sqrt()
-    })
+    if count == 0 {
+        return Err(PyValueError::new_err(
+            "X must contain at least one observed non-NaN value",
+        ));
+    }
+    Ok((squared_deviations / count as f64).sqrt())
 }
 
 /// Parses the Python-facing fitted-data retention policy.

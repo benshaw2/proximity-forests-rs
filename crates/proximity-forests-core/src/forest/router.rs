@@ -37,7 +37,9 @@ impl RouteResult {
 /// # Errors
 ///
 /// Returns an error for missing exemplars, invalid distances, or missing RNG
-/// state when randomized tie handling is requested.
+/// state when randomized tie handling is requested. Positive infinity denotes
+/// an unavailable comparison. If every comparison is unavailable, all branches
+/// form an exact tie resolved by the configured tie policy.
 pub fn route_vector(
     query: NumericVectorView<'_>,
     observations: &[NumericVectorView<'_>],
@@ -194,5 +196,56 @@ mod tests {
         .expect("route");
         assert_eq!(result.branch(), 0);
         assert_eq!(result.distance(), 4.0);
+    }
+    #[test]
+    fn all_unavailable_routes_follow_the_tie_policy() {
+        use crate::NoOverlapPolicy;
+        let values = [[f64::NAN], [f64::NAN]];
+        let observations: Vec<_> = values
+            .iter()
+            .map(|values| NumericVectorView::from_f64(values))
+            .collect();
+        let candidate = CandidateSplit::new(
+            DistanceConfig::NaNSquaredEuclidean {
+                no_overlap: NoOverlapPolicy::Infinite,
+            },
+            Vec::new(),
+            vec![ObservationIndex::new(0), ObservationIndex::new(1)],
+        )
+        .expect("candidate");
+        let first = route_vector(
+            observations[0],
+            &observations,
+            &candidate,
+            TiePolicy::First,
+            None,
+            &mut DistanceScratch::new(),
+        )
+        .expect("unavailable route");
+        assert_eq!(first.branch(), 0);
+        assert_eq!(first.distance(), f64::INFINITY);
+
+        let mut first_rng = crate::ModelRng::from_seed(17);
+        let mut second_rng = crate::ModelRng::from_seed(17);
+        let random_first = route_vector(
+            observations[0],
+            &observations,
+            &candidate,
+            TiePolicy::Random,
+            Some(&mut first_rng),
+            &mut DistanceScratch::new(),
+        )
+        .expect("random unavailable route");
+        let random_second = route_vector(
+            observations[0],
+            &observations,
+            &candidate,
+            TiePolicy::Random,
+            Some(&mut second_rng),
+            &mut DistanceScratch::new(),
+        )
+        .expect("repeat random unavailable route");
+        assert_eq!(random_first, random_second);
+        assert_eq!(random_first.distance(), f64::INFINITY);
     }
 }

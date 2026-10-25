@@ -1,6 +1,6 @@
 [package]
 name = "proximity-forests-core"
-description = "High-performance Rust core for Proximity Forest models"
+description = "Rust core for Proximity Forest models"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

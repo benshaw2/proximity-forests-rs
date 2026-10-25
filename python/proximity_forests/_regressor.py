@@ -173,7 +173,6 @@ class ProximityForestRegressor:
         return self
 
     @staticmethod
-    @staticmethod
     def _validate_X(X):
         if isinstance(X, (list, tuple)):
             if len(X) < 2:

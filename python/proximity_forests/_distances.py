@@ -37,6 +37,7 @@ class DistanceSpec:
     epsilon: float | None = None
     cost: float | None = None
     penalty: float | None = None
+    no_overlap: str | None = None
 
     def native_token(self, *, layout: str) -> str:
         name = _normalize_name(self.name)
@@ -62,6 +63,7 @@ class DistanceSpec:
                 ("epsilon", self.epsilon),
                 ("cost", self.cost),
                 ("penalty", self.penalty),
+                ("no_overlap", self.no_overlap),
             )
             if value is not None
         }
