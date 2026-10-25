@@ -11,32 +11,45 @@ permissions:
 
 jobs:
   wheels:
-    name: ${{ matrix.platform.name }} / Python ${{ matrix.python }}
+    name: ${{ matrix.platform.name }} / Python ${{ matrix.python.version }}
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python:
+          - version: "3.10"
+            tag: "310"
+          - version: "3.11"
+            tag: "311"
+          - version: "3.12"
+            tag: "312"
+          - version: "3.13"
+            tag: "313"
         platform:
           - name: linux-x86_64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            linux: true
             macos_target: ""
           - name: linux-aarch64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            linux: true
             macos_target: ""
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            linux: false
             macos_target: ""
           - name: macos-x86_64
             os: macos-15-intel
             target: x86_64-apple-darwin
+            linux: false
             macos_target: "10.12"
           - name: macos-arm64
             os: macos-14
             target: aarch64-apple-darwin
+            linux: false
             macos_target: "11.0"
 
     env:
@@ -49,11 +62,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python }}
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
+          python-version: ${{ matrix.python.version }}
 
       - name: Build wheel with Maturin
         uses: PyO3/maturin-action@v1
@@ -61,20 +70,21 @@ jobs:
           command: build
           target: ${{ matrix.platform.target }}
           manylinux: "2_28"
+          rust-toolchain: "1.85.0"
           args: >-
             --release
             --out dist
-            --interpreter python
+            --interpreter ${{ matrix.platform.linux && format('/opt/python/cp{0}-cp{0}/bin/python', matrix.python.tag) || 'python' }}
             --compatibility pypi
-          cache: sccache
+          sccache: true
 
-      - name: Install wheel in the selected interpreter
+      - name: Install wheel in selected interpreter
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy>=1.23" pytest
           python -m pip install --no-deps --force-reinstall --find-links dist proximity-forests==0.1.0a1
 
-      - name: Test installed wheel outside the source tree
+      - name: Test installed wheel outside source tree
         working-directory: ${{ runner.temp }}
         run: >-
           python -m pytest
@@ -94,7 +104,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.platform.name }}-python-${{ matrix.python }}
+          name: wheel-${{ matrix.platform.name }}-python-${{ matrix.python.version }}
           path: dist/*.whl
           if-no-files-found: error
 
@@ -105,12 +115,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
       - uses: PyO3/maturin-action@v1
         with:
           command: sdist
+          rust-toolchain: "1.85.0"
           args: --out dist
       - uses: actions/upload-artifact@v4
         with:
