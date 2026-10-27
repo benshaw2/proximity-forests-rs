@@ -276,9 +276,9 @@ impl<'py> UnequalSeriesInput<'py> {
             )
         })?;
         let case_count = sequence.len()?;
-        if case_count < 2 {
+        if case_count == 0 {
             return Err(PyValueError::new_err(
-                "unequal-length X must contain at least two cases",
+                "unequal-length X must contain at least one case",
             ));
         }
         let first = sequence.get_item(0)?;

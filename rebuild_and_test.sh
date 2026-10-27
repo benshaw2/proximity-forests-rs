@@ -30,6 +30,7 @@ cargo fmt --all --check
 
 # Compile both the core and Python binding crates before replacing the installed extension.
 cargo check --workspace
+cargo test --workspace
 
 # Prevent an older in-tree extension from shadowing the editable installation.
 find python/proximity_forests -maxdepth 1 -type f \

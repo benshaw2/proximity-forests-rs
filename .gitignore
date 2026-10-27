@@ -8,6 +8,11 @@
 /serialization_artifacts/
 practical_test.py
 /scripts/
+/PF_wrapper.py
+/PFGAP.jar
+PFGAP_output/
+.*backups/
+/benchmarks/
 
 # RustRover / IntelliJ local workspace state
 /.idea/

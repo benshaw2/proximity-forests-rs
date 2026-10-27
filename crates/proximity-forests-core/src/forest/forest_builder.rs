@@ -18,6 +18,7 @@ use super::{
 /// Fits a vector-layout classification forest in parallel across trees.
 pub fn fit_vector_classification_forest(
     config: ForestConfig,
+    thread_count: usize,
     observations: &[NumericVectorView<'_>],
     targets: &ClassificationTargets,
     distance_catalog: &[DistanceChoice],
@@ -29,7 +30,7 @@ pub fn fit_vector_classification_forest(
     config.validate()?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), 0, |tree_index| {
+        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_vector_classification_tree(
@@ -61,6 +62,7 @@ pub fn fit_vector_classification_forest(
 /// Fits a multivariate classification forest in parallel across trees.
 pub fn fit_multivariate_classification_forest(
     config: ForestConfig,
+    thread_count: usize,
     observations: &[MultivariateSeriesView<'_>],
     targets: &ClassificationTargets,
     distance_catalog: &[DistanceChoice],
@@ -83,7 +85,7 @@ pub fn fit_multivariate_classification_forest(
     }
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), 0, |tree_index| {
+        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_multivariate_classification_tree(
@@ -115,6 +117,7 @@ pub fn fit_multivariate_classification_forest(
 /// Fits a vector-layout regression forest in parallel across trees.
 pub fn fit_vector_regression_forest(
     config: ForestConfig,
+    thread_count: usize,
     observations: &[NumericVectorView<'_>],
     targets: &RegressionTargets,
     distance_catalog: &[DistanceChoice],
@@ -127,7 +130,7 @@ pub fn fit_vector_regression_forest(
     config.validate()?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), 0, |tree_index| {
+        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_vector_regression_tree(
@@ -160,6 +163,7 @@ pub fn fit_vector_regression_forest(
 /// Fits a multivariate regression forest in parallel across trees.
 pub fn fit_multivariate_regression_forest(
     config: ForestConfig,
+    thread_count: usize,
     observations: &[MultivariateSeriesView<'_>],
     targets: &RegressionTargets,
     distance_catalog: &[DistanceChoice],
@@ -183,7 +187,7 @@ pub fn fit_multivariate_regression_forest(
     }
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), 0, |tree_index| {
+        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_multivariate_regression_tree(
@@ -216,6 +220,7 @@ pub fn fit_multivariate_regression_forest(
 /// Fits a vector-layout isolation forest in parallel across trees.
 pub fn fit_vector_isolation_forest(
     config: ForestConfig,
+    thread_count: usize,
     observations: &[NumericVectorView<'_>],
     distance_catalog: &[DistanceChoice],
     distance_sampling: DistanceSamplingContext,
@@ -227,7 +232,7 @@ pub fn fit_vector_isolation_forest(
     let normalization_size = observations.len();
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), 0, |tree_index| {
+        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_vector_isolation_tree(
@@ -259,6 +264,7 @@ pub fn fit_vector_isolation_forest(
 /// Fits a multivariate isolation forest in parallel across trees.
 pub fn fit_multivariate_isolation_forest(
     config: ForestConfig,
+    thread_count: usize,
     observations: &[MultivariateSeriesView<'_>],
     distance_catalog: &[DistanceChoice],
     distance_sampling: DistanceSamplingContext,
@@ -281,7 +287,7 @@ pub fn fit_multivariate_isolation_forest(
     let normalization_size = observations.len();
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), 0, |tree_index| {
+        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_multivariate_isolation_tree(

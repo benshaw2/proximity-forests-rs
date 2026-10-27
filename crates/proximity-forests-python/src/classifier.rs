@@ -93,7 +93,7 @@ impl NativeProximityForestClassifier {
 
     #[new]
     #[pyo3(signature = (n_estimators=100, n_candidates=5, max_depth=None,
-        min_samples_split=2, bootstrap=true, random_state=0, n_jobs=0, data_retention=String::from("exemplars"), distances=vec![String::from("squared_euclidean")]))]
+        min_samples_split=2, bootstrap=true, random_state=0, n_jobs=1, data_retention=String::from("exemplars"), distances=vec![String::from("squared_euclidean")]))]
     fn new(
         n_estimators: usize,
         n_candidates: usize,
@@ -192,6 +192,7 @@ impl NativeProximityForestClassifier {
         let model = input.with_vector_views(|views| {
             fit_vector_classification_forest(
                 config,
+                self.n_jobs,
                 views,
                 &targets,
                 &distance_catalog,
@@ -246,6 +247,7 @@ impl NativeProximityForestClassifier {
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_classification_forest(
                 config,
+                self.n_jobs,
                 views,
                 &targets,
                 &catalog,
@@ -360,6 +362,11 @@ impl NativeProximityForestClassifier {
         class_counts: Vec<usize>,
     ) -> PyResult<()> {
         let input = UnequalSeriesInput::extract(x)?;
+        if input.cases() < 2 {
+            return Err(PyValueError::new_err(
+                "fitting unequal-length X requires at least two cases",
+            ));
+        }
         let shape = y.shape();
         if shape[0] != input.cases() || shape[1] == 0 || class_counts.len() != shape[1] {
             return Err(PyValueError::new_err(
@@ -391,6 +398,7 @@ impl NativeProximityForestClassifier {
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_classification_forest(
                 config,
+                self.n_jobs,
                 views,
                 &targets,
                 &catalog,

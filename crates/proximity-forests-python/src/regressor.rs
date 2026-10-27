@@ -81,7 +81,7 @@ impl NativeProximityForestRegressor {
     #[new]
     #[pyo3(signature = (n_estimators=100, n_candidates=5, n_exemplars=2,
         max_depth=None, min_samples_split=2, bootstrap=true,
-        random_state=0, n_jobs=0, data_retention=String::from("exemplars"), distances=vec![String::from("squared_euclidean")]))]
+        random_state=0, n_jobs=1, data_retention=String::from("exemplars"), distances=vec![String::from("squared_euclidean")]))]
     fn new(
         n_estimators: usize,
         n_candidates: usize,
@@ -164,6 +164,7 @@ impl NativeProximityForestRegressor {
         let model = input.with_vector_views(|views| {
             fit_vector_regression_forest(
                 config,
+                self.n_jobs,
                 views,
                 &targets,
                 &distance_catalog,
@@ -208,6 +209,7 @@ impl NativeProximityForestRegressor {
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_regression_forest(
                 config,
+                self.n_jobs,
                 views,
                 &targets,
                 &catalog,
@@ -279,6 +281,11 @@ impl NativeProximityForestRegressor {
 
     fn fit_unequal(&mut self, x: &Bound<'_, PyAny>, y: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         let input = UnequalSeriesInput::extract(x)?;
+        if input.cases() < 2 {
+            return Err(PyValueError::new_err(
+                "fitting unequal-length X requires at least two cases",
+            ));
+        }
         let shape = y.shape();
         if shape[0] != input.cases() || shape[1] == 0 {
             return Err(PyValueError::new_err("X and y shapes are incompatible"));
@@ -308,6 +315,7 @@ impl NativeProximityForestRegressor {
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_regression_forest(
                 config,
+                self.n_jobs,
                 views,
                 &targets,
                 &catalog,

@@ -26,7 +26,7 @@ class ProximityForestRegressor:
         distances="default",
         bootstrap: bool = True,
         random_state: int | None = None,
-        n_jobs: int | None = None,
+        n_jobs: int | None = 1,
         data_retention: str = "exemplars",
     ) -> None:
         self.n_estimators = n_estimators
@@ -41,7 +41,7 @@ class ProximityForestRegressor:
         self.data_retention = data_retention
 
     def fit(self, X, y):
-        X, layout = self._validate_X(X)
+        X, layout = self._validate_X(X, fitting=True)
         n_cases = len(X) if layout == "unequal_multivariate" else X.shape[0]
         y = np.asarray(y, dtype=np.float64)
         self._target_was_1d = y.ndim == 1
@@ -173,10 +173,15 @@ class ProximityForestRegressor:
         return self
 
     @staticmethod
-    def _validate_X(X):
+    def _validate_X(X, *, fitting: bool = False):
         if isinstance(X, (list, tuple)):
-            if len(X) < 2:
-                raise ValueError("unequal-length X must contain at least two cases")
+            minimum_cases = 2 if fitting else 1
+            if len(X) < minimum_cases:
+                operation = "fitting" if fitting else "inference"
+                raise ValueError(
+                    f"unequal-length X must contain at least {minimum_cases} "
+                    f"case{'s' if minimum_cases != 1 else ''} for {operation}"
+                )
             cases = [np.asarray(case) for case in X]
             ranks = {case.ndim for case in cases}
             if not ranks.issubset({1, 2}) or len(ranks) != 1:
@@ -203,18 +208,33 @@ class ProximityForestRegressor:
             return normalized, "unequal_multivariate"
 
         X = np.asarray(X)
+        minimum_cases = 2 if fitting else 1
         if X.ndim == 2:
-            if X.shape[0] < 2 or X.shape[1] == 0:
+            if X.shape[0] < minimum_cases or X.shape[1] == 0:
                 raise ValueError(
-                    "2D X must contain at least two cases and one feature or timepoint"
+                    f"2D X must contain at least {minimum_cases} case"
+                    f"{'s' if minimum_cases != 1 else ''} and one feature or timepoint"
                 )
             layout = "vector"
         elif X.ndim == 3:
-            if X.shape[0] < 2 or X.shape[1] == 0 or X.shape[2] == 0:
+            if (
+                X.shape[0] < minimum_cases
+                or X.shape[1] == 0
+                or X.shape[2] == 0
+            ):
                 raise ValueError(
-                    "3D X must have nonempty shape (cases, channels, timepoints)"
+                    f"3D X must contain at least {minimum_cases} case"
+                    f"{'s' if minimum_cases != 1 else ''} and nonempty channel/time axes"
                 )
-            layout = "multivariate"
+            if X.shape[1] == 1:
+                # aeon-style univariate collection: (cases, 1, timepoints).
+                # Canonicalize to the vector/univariate path so 2D and 3D
+                # one-channel inputs are interchangeable at inference and
+                # use the univariate default/PF distance catalogs.
+                X = X[:, 0, :]
+                layout = "vector"
+            else:
+                layout = "multivariate"
         else:
             raise ValueError(
                 "X must be a 2D/3D NumPy array or a list of 1D/2D arrays"
