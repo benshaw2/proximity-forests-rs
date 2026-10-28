@@ -206,6 +206,12 @@ class ProximityForestClassifier:
             if name not in valid:
                 raise ValueError(f"Invalid parameter {name!r} for this estimator")
             setattr(self, name, value)
+        if "n_jobs" in params:
+            native = getattr(self, "_native", None)
+            if native is not None:
+                native.set_n_jobs(
+                    0 if self.n_jobs in (None, -1) else int(self.n_jobs)
+                )
         return self
 
     @staticmethod

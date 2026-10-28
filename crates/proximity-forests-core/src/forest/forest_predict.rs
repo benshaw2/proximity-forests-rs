@@ -193,7 +193,7 @@ pub fn predict_forest_multivariate_isolation(
     aggregate_isolation(path_sum, model)
 }
 
-fn aggregate_classification(
+pub(super) fn aggregate_classification(
     predictions: &[ClassificationPrediction],
     output_count: usize,
 ) -> CoreResult<ForestClassificationPrediction> {
@@ -263,7 +263,10 @@ fn divide(values: &mut [f64], count: usize) -> CoreResult<()> {
     Ok(())
 }
 
-fn aggregate_isolation(path_sum: f64, model: &IsolationForest) -> CoreResult<IsolationPrediction> {
+pub(super) fn aggregate_isolation(
+    path_sum: f64,
+    model: &IsolationForest,
+) -> CoreResult<IsolationPrediction> {
     let tree_count = model.forest().trees().len();
     if tree_count == 0 {
         return Err(CoreError::invalid_data(

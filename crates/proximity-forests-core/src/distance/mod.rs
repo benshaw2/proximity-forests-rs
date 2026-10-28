@@ -25,6 +25,7 @@ mod shape;
 mod twe;
 mod vector;
 mod weighted_dtw;
+mod work;
 
 pub use arow::{dtw_arow, dtw_arow_dependent, dtw_arow_independent};
 pub use capabilities::DistanceCapabilities;
@@ -59,3 +60,4 @@ pub use vector::{cosine, cosine_selected, manhattan, manhattan_independent, manh
 pub use weighted_dtw::{
     wddtw, wddtw_dependent, wddtw_independent, wdtw, wdtw_dependent, wdtw_independent,
 };
+pub use work::{DistanceWorkShape, WorkUnits};

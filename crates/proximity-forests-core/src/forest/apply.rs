@@ -5,7 +5,9 @@ use crate::{
 };
 
 use super::{
-    FittedForest, OwnedObservationStore, parallel_indexed, traverse_multivariate, traverse_vector,
+    ExecutionContext, FittedForest, OwnedObservationStore, parallel_indexed_in,
+    traverse_multivariate, traverse_vector,
+    work_estimate::{InferenceTilePlan, inference_thread_count},
 };
 
 /// Compact leaf identifier returned by forest application.
@@ -89,28 +91,9 @@ pub fn apply_vector_many(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyResult> {
-    let rows = parallel_indexed(queries.len(), thread_count, |sample| {
-        let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
-        let mut scratch = DistanceScratch::new();
-        let mut leaves = Vec::with_capacity(forest.trees().len());
-        for (tree_index, tree) in forest.trees().iter().enumerate() {
-            let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
-                return Err(layout_error("vector tree exemplars"));
-            };
-            let exemplars = store.views();
-            let visit = traverse_vector(
-                tree,
-                queries[sample],
-                &exemplars,
-                forest.tie_policy(),
-                SeedMixer::tree(query_seed, tree_index),
-                &mut scratch,
-            )?;
-            leaves.push(compact_node_id(visit.node().get())?);
-        }
-        Ok(leaves.into_boxed_slice())
-    })?;
-    finish_apply(rows, forest.trees().len())
+    let thread_count = inference_thread_count(queries.len(), forest.trees().len(), thread_count);
+    let context = ExecutionContext::new(thread_count)?;
+    apply_vector_tiled(forest, queries, prediction_seed, &context)
 }
 
 /// Applies a multivariate forest without allocating a depth matrix.
@@ -120,28 +103,9 @@ pub fn apply_multivariate_many(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyResult> {
-    let rows = parallel_indexed(queries.len(), thread_count, |sample| {
-        let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
-        let mut scratch = DistanceScratch::new();
-        let mut leaves = Vec::with_capacity(forest.trees().len());
-        for (tree_index, tree) in forest.trees().iter().enumerate() {
-            let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
-                return Err(layout_error("multivariate tree exemplars"));
-            };
-            let exemplars = store.views()?;
-            let visit = traverse_multivariate(
-                tree,
-                queries[sample],
-                &exemplars,
-                forest.tie_policy(),
-                SeedMixer::tree(query_seed, tree_index),
-                &mut scratch,
-            )?;
-            leaves.push(compact_node_id(visit.node().get())?);
-        }
-        Ok(leaves.into_boxed_slice())
-    })?;
-    finish_apply(rows, forest.trees().len())
+    let thread_count = inference_thread_count(queries.len(), forest.trees().len(), thread_count);
+    let context = ExecutionContext::new(thread_count)?;
+    apply_multivariate_tiled(forest, queries, prediction_seed, &context)
 }
 
 /// Applies a vector-layout forest and also records traversal depths.
@@ -151,30 +115,9 @@ pub fn apply_vector_many_with_depths(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyWithDepths> {
-    let rows = parallel_indexed(queries.len(), thread_count, |sample| {
-        let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
-        let mut scratch = DistanceScratch::new();
-        let mut leaves = Vec::with_capacity(forest.trees().len());
-        let mut depths = Vec::with_capacity(forest.trees().len());
-        for (tree_index, tree) in forest.trees().iter().enumerate() {
-            let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
-                return Err(layout_error("vector tree exemplars"));
-            };
-            let exemplars = store.views();
-            let visit = traverse_vector(
-                tree,
-                queries[sample],
-                &exemplars,
-                forest.tie_policy(),
-                SeedMixer::tree(query_seed, tree_index),
-                &mut scratch,
-            )?;
-            leaves.push(compact_node_id(visit.node().get())?);
-            depths.push(compact_depth(visit.depth())?);
-        }
-        Ok((leaves.into_boxed_slice(), depths.into_boxed_slice()))
-    })?;
-    finish_apply_with_depths(rows, forest.trees().len())
+    let thread_count = inference_thread_count(queries.len(), forest.trees().len(), thread_count);
+    let context = ExecutionContext::new(thread_count)?;
+    apply_vector_tiled_with_depths(forest, queries, prediction_seed, &context)
 }
 
 /// Applies a multivariate forest and also records traversal depths.
@@ -184,64 +127,266 @@ pub fn apply_multivariate_many_with_depths(
     prediction_seed: u64,
     thread_count: usize,
 ) -> CoreResult<ForestApplyWithDepths> {
-    let rows = parallel_indexed(queries.len(), thread_count, |sample| {
-        let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
-        let mut scratch = DistanceScratch::new();
-        let mut leaves = Vec::with_capacity(forest.trees().len());
-        let mut depths = Vec::with_capacity(forest.trees().len());
-        for (tree_index, tree) in forest.trees().iter().enumerate() {
-            let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
-                return Err(layout_error("multivariate tree exemplars"));
-            };
-            let exemplars = store.views()?;
-            let visit = traverse_multivariate(
-                tree,
-                queries[sample],
-                &exemplars,
-                forest.tie_policy(),
-                SeedMixer::tree(query_seed, tree_index),
-                &mut scratch,
-            )?;
-            leaves.push(compact_node_id(visit.node().get())?);
-            depths.push(compact_depth(visit.depth())?);
-        }
-        Ok((leaves.into_boxed_slice(), depths.into_boxed_slice()))
-    })?;
-    finish_apply_with_depths(rows, forest.trees().len())
+    let thread_count = inference_thread_count(queries.len(), forest.trees().len(), thread_count);
+    let context = ExecutionContext::new(thread_count)?;
+    apply_multivariate_tiled_with_depths(forest, queries, prediction_seed, &context)
 }
 
-fn finish_apply(
-    rows: Vec<Box<[AppliedLeafId]>>,
+#[derive(Debug)]
+struct ApplyTile {
+    query_start: usize,
+    tree_start: usize,
+    query_count: usize,
     tree_count: usize,
+    leaves: Box<[AppliedLeafId]>,
+}
+
+fn apply_vector_tiled(
+    forest: &FittedForest,
+    queries: &[NumericVectorView<'_>],
+    prediction_seed: u64,
+    context: &ExecutionContext,
 ) -> CoreResult<ForestApplyResult> {
-    let sample_count = rows.len();
-    let capacity = matrix_len(sample_count, tree_count)?;
-    let mut leaf_indices = Vec::with_capacity(capacity);
-    for leaves in rows {
-        validate_row(leaves.len(), tree_count)?;
-        leaf_indices.extend_from_slice(&leaves);
-    }
-    debug_assert_eq!(leaf_indices.len(), capacity);
-    Ok(ForestApplyResult {
-        sample_count,
-        tree_count,
-        leaf_indices: leaf_indices.into_boxed_slice(),
-    })
+    let plan = InferenceTilePlan::new(
+        queries.len(),
+        forest.trees().len(),
+        context.budget().resolved(),
+        2,
+    );
+    let tiles = parallel_indexed_in(context, plan.tile_count(), &|tile_index| {
+        let (query_range, tree_range) = plan
+            .tile(tile_index)
+            .ok_or_else(|| CoreError::invalid_data("inference tile index exceeded its plan"))?;
+        let query_start = query_range.start;
+        let tree_start = tree_range.start;
+        let query_count = query_range.len();
+        let tree_count = tree_range.len();
+        let mut scratch = DistanceScratch::new();
+        let mut leaves = Vec::with_capacity(matrix_len(query_count, tree_count)?);
+        for sample in query_range {
+            let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
+            for tree_index in tree_range.clone() {
+                let tree = &forest.trees()[tree_index];
+                let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+                    return Err(layout_error("vector tree exemplars"));
+                };
+                let exemplars = store.views();
+                let visit = traverse_vector(
+                    tree,
+                    queries[sample],
+                    &exemplars,
+                    forest.tie_policy(),
+                    SeedMixer::tree(query_seed, tree_index),
+                    &mut scratch,
+                )?;
+                leaves.push(compact_node_id(visit.node().get())?);
+            }
+        }
+        Ok(ApplyTile {
+            query_start,
+            tree_start,
+            query_count,
+            tree_count,
+            leaves: leaves.into_boxed_slice(),
+        })
+    })?;
+    finish_apply_tiles(queries.len(), forest.trees().len(), tiles)
 }
 
-fn finish_apply_with_depths(
-    rows: Vec<(Box<[AppliedLeafId]>, Box<[u32]>)>,
+fn apply_multivariate_tiled(
+    forest: &FittedForest,
+    queries: &[MultivariateSeriesView<'_>],
+    prediction_seed: u64,
+    context: &ExecutionContext,
+) -> CoreResult<ForestApplyResult> {
+    let plan = InferenceTilePlan::new(
+        queries.len(),
+        forest.trees().len(),
+        context.budget().resolved(),
+        2,
+    );
+    let tiles = parallel_indexed_in(context, plan.tile_count(), &|tile_index| {
+        let (query_range, tree_range) = plan
+            .tile(tile_index)
+            .ok_or_else(|| CoreError::invalid_data("inference tile index exceeded its plan"))?;
+        let query_start = query_range.start;
+        let tree_start = tree_range.start;
+        let query_count = query_range.len();
+        let tree_count = tree_range.len();
+        let mut scratch = DistanceScratch::new();
+        let mut leaves = Vec::with_capacity(matrix_len(query_count, tree_count)?);
+        for sample in query_range {
+            let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
+            for tree_index in tree_range.clone() {
+                let tree = &forest.trees()[tree_index];
+                let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+                    return Err(layout_error("multivariate tree exemplars"));
+                };
+                let exemplars = store.views()?;
+                let visit = traverse_multivariate(
+                    tree,
+                    queries[sample],
+                    &exemplars,
+                    forest.tie_policy(),
+                    SeedMixer::tree(query_seed, tree_index),
+                    &mut scratch,
+                )?;
+                leaves.push(compact_node_id(visit.node().get())?);
+            }
+        }
+        Ok(ApplyTile {
+            query_start,
+            tree_start,
+            query_count,
+            tree_count,
+            leaves: leaves.into_boxed_slice(),
+        })
+    })?;
+    finish_apply_tiles(queries.len(), forest.trees().len(), tiles)
+}
+
+#[derive(Debug)]
+struct ApplyDepthTile {
+    query_start: usize,
+    tree_start: usize,
+    query_count: usize,
     tree_count: usize,
+    leaves: Box<[AppliedLeafId]>,
+    depths: Box<[u32]>,
+}
+
+fn apply_vector_tiled_with_depths(
+    forest: &FittedForest,
+    queries: &[NumericVectorView<'_>],
+    prediction_seed: u64,
+    context: &ExecutionContext,
 ) -> CoreResult<ForestApplyWithDepths> {
-    let sample_count = rows.len();
+    let plan = InferenceTilePlan::new(
+        queries.len(),
+        forest.trees().len(),
+        context.budget().resolved(),
+        2,
+    );
+    let tiles = parallel_indexed_in(context, plan.tile_count(), &|tile_index| {
+        let (query_range, tree_range) = plan
+            .tile(tile_index)
+            .ok_or_else(|| CoreError::invalid_data("inference tile index exceeded its plan"))?;
+        let query_start = query_range.start;
+        let tree_start = tree_range.start;
+        let query_count = query_range.len();
+        let tree_count = tree_range.len();
+        let capacity = matrix_len(query_count, tree_count)?;
+        let mut scratch = DistanceScratch::new();
+        let mut leaves = Vec::with_capacity(capacity);
+        let mut depths = Vec::with_capacity(capacity);
+        for sample in query_range {
+            let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
+            for tree_index in tree_range.clone() {
+                let tree = &forest.trees()[tree_index];
+                let Some(OwnedObservationStore::Vector(store)) = tree.exemplars() else {
+                    return Err(layout_error("vector tree exemplars"));
+                };
+                let exemplars = store.views();
+                let visit = traverse_vector(
+                    tree,
+                    queries[sample],
+                    &exemplars,
+                    forest.tie_policy(),
+                    SeedMixer::tree(query_seed, tree_index),
+                    &mut scratch,
+                )?;
+                leaves.push(compact_node_id(visit.node().get())?);
+                depths.push(compact_depth(visit.depth())?);
+            }
+        }
+        Ok(ApplyDepthTile {
+            query_start,
+            tree_start,
+            query_count,
+            tree_count,
+            leaves: leaves.into_boxed_slice(),
+            depths: depths.into_boxed_slice(),
+        })
+    })?;
+    finish_apply_depth_tiles(queries.len(), forest.trees().len(), tiles)
+}
+
+fn apply_multivariate_tiled_with_depths(
+    forest: &FittedForest,
+    queries: &[MultivariateSeriesView<'_>],
+    prediction_seed: u64,
+    context: &ExecutionContext,
+) -> CoreResult<ForestApplyWithDepths> {
+    let plan = InferenceTilePlan::new(
+        queries.len(),
+        forest.trees().len(),
+        context.budget().resolved(),
+        2,
+    );
+    let tiles = parallel_indexed_in(context, plan.tile_count(), &|tile_index| {
+        let (query_range, tree_range) = plan
+            .tile(tile_index)
+            .ok_or_else(|| CoreError::invalid_data("inference tile index exceeded its plan"))?;
+        let query_start = query_range.start;
+        let tree_start = tree_range.start;
+        let query_count = query_range.len();
+        let tree_count = tree_range.len();
+        let capacity = matrix_len(query_count, tree_count)?;
+        let mut scratch = DistanceScratch::new();
+        let mut leaves = Vec::with_capacity(capacity);
+        let mut depths = Vec::with_capacity(capacity);
+        for sample in query_range {
+            let query_seed = SeedMixer::observation(prediction_seed, sample as u64);
+            for tree_index in tree_range.clone() {
+                let tree = &forest.trees()[tree_index];
+                let Some(OwnedObservationStore::Multivariate(store)) = tree.exemplars() else {
+                    return Err(layout_error("multivariate tree exemplars"));
+                };
+                let exemplars = store.views()?;
+                let visit = traverse_multivariate(
+                    tree,
+                    queries[sample],
+                    &exemplars,
+                    forest.tie_policy(),
+                    SeedMixer::tree(query_seed, tree_index),
+                    &mut scratch,
+                )?;
+                leaves.push(compact_node_id(visit.node().get())?);
+                depths.push(compact_depth(visit.depth())?);
+            }
+        }
+        Ok(ApplyDepthTile {
+            query_start,
+            tree_start,
+            query_count,
+            tree_count,
+            leaves: leaves.into_boxed_slice(),
+            depths: depths.into_boxed_slice(),
+        })
+    })?;
+    finish_apply_depth_tiles(queries.len(), forest.trees().len(), tiles)
+}
+
+fn finish_apply_depth_tiles(
+    sample_count: usize,
+    tree_count: usize,
+    tiles: Vec<ApplyDepthTile>,
+) -> CoreResult<ForestApplyWithDepths> {
     let capacity = matrix_len(sample_count, tree_count)?;
-    let mut leaf_indices = Vec::with_capacity(capacity);
-    let mut depths = Vec::with_capacity(capacity);
-    for (leaves, row_depths) in rows {
-        validate_row(leaves.len(), tree_count)?;
-        validate_row(row_depths.len(), tree_count)?;
-        leaf_indices.extend_from_slice(&leaves);
-        depths.extend_from_slice(&row_depths);
+    let mut leaf_indices = vec![0; capacity];
+    let mut depths = vec![0; capacity];
+    for tile in tiles {
+        let tile_capacity = matrix_len(tile.query_count, tile.tree_count)?;
+        validate_row(tile.leaves.len(), tile_capacity)?;
+        validate_row(tile.depths.len(), tile_capacity)?;
+        for local_query in 0..tile.query_count {
+            let source_start = local_query * tile.tree_count;
+            let source = source_start..source_start + tile.tree_count;
+            let destination_start = (tile.query_start + local_query) * tree_count + tile.tree_start;
+            let destination = destination_start..destination_start + tile.tree_count;
+            leaf_indices[destination.clone()].copy_from_slice(&tile.leaves[source.clone()]);
+            depths[destination].copy_from_slice(&tile.depths[source]);
+        }
     }
     Ok(ForestApplyWithDepths {
         assignments: ForestApplyResult {
@@ -250,6 +395,32 @@ fn finish_apply_with_depths(
             leaf_indices: leaf_indices.into_boxed_slice(),
         },
         depths: depths.into_boxed_slice(),
+    })
+}
+
+fn finish_apply_tiles(
+    sample_count: usize,
+    tree_count: usize,
+    tiles: Vec<ApplyTile>,
+) -> CoreResult<ForestApplyResult> {
+    let capacity = matrix_len(sample_count, tree_count)?;
+    let mut leaf_indices = vec![0; capacity];
+    for tile in tiles {
+        validate_row(
+            tile.leaves.len(),
+            matrix_len(tile.query_count, tile.tree_count)?,
+        )?;
+        for local_query in 0..tile.query_count {
+            let source_start = local_query * tile.tree_count;
+            let destination_start = (tile.query_start + local_query) * tree_count + tile.tree_start;
+            leaf_indices[destination_start..destination_start + tile.tree_count]
+                .copy_from_slice(&tile.leaves[source_start..source_start + tile.tree_count]);
+        }
+    }
+    Ok(ForestApplyResult {
+        sample_count,
+        tree_count,
+        leaf_indices: leaf_indices.into_boxed_slice(),
     })
 }
 

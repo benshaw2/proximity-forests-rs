@@ -51,6 +51,32 @@ impl SelectedCandidate {
     }
 }
 
+/// Outcome of evaluating one stable candidate index.
+///
+/// Valid candidates carry all state required for ordered reduction. Rejected
+/// candidates represent expected degeneracy, not an execution failure. Errors
+/// remain outside this enum as `CoreResult<CandidateEvaluation>` so indexed
+/// collection preserves the lowest failing candidate index.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CandidateEvaluation {
+    /// Candidate routed and scored successfully.
+    Valid(SelectedCandidate),
+    /// Candidate was structurally unavailable or produced a degenerate split.
+    Rejected,
+}
+
+impl CandidateEvaluation {
+    /// Creates one valid evaluation.
+    #[must_use]
+    pub const fn valid(
+        candidate: CandidateSplit,
+        score: CandidateScore,
+        partition: CandidatePartition,
+    ) -> Self {
+        Self::Valid(SelectedCandidate::new(candidate, score, partition))
+    }
+}
+
 /// Retains the first strictly best valid candidate.
 ///
 /// Exact score ties keep the earlier candidate, making candidate-order behavior
@@ -106,6 +132,25 @@ impl CandidateSelector {
         Ok(replace)
     }
 
+    /// Considers one indexed candidate evaluation in stable order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible candidate scores, malformed partitions,
+    /// or candidate-count overflow.
+    pub fn consider_evaluation(&mut self, evaluation: CandidateEvaluation) -> CoreResult<bool> {
+        match evaluation {
+            CandidateEvaluation::Valid(selected) => {
+                let (candidate, score, partition) = selected.into_parts();
+                self.consider(candidate, score, partition)
+            }
+            CandidateEvaluation::Rejected => {
+                self.reject()?;
+                Ok(false)
+            }
+        }
+    }
+
     /// Records one invalid or degenerate generated candidate.
     ///
     /// # Errors
@@ -146,7 +191,7 @@ impl CandidateSelector {
 
 #[cfg(test)]
 mod tests {
-    use super::CandidateSelector;
+    use super::{CandidateEvaluation, CandidateSelector};
     use super::{CandidatePartition, CandidateScore, CandidateSplit};
     use crate::forest::{ObservationIndex, ScorePreference};
     use crate::{DistanceConfig, NodeMembership, SampleId};
@@ -186,6 +231,27 @@ mod tests {
         assert_eq!(
             selector.best().expect("best").candidate().exemplars()[0].get(),
             1
+        );
+    }
+
+    #[test]
+    fn ordered_evaluations_preserve_rejections_and_first_ties() {
+        let mut selector = CandidateSelector::new();
+        selector
+            .consider_evaluation(CandidateEvaluation::Rejected)
+            .expect("reject");
+        let score = CandidateScore::new(1.0, ScorePreference::Minimize).expect("score");
+        selector
+            .consider_evaluation(CandidateEvaluation::valid(candidate(3), score, partition()))
+            .expect("first valid");
+        selector
+            .consider_evaluation(CandidateEvaluation::valid(candidate(4), score, partition()))
+            .expect("tied valid");
+        assert_eq!(selector.rejected_count(), 1);
+        assert_eq!(selector.valid_count(), 2);
+        assert_eq!(
+            selector.best().expect("best").candidate().exemplars()[0].get(),
+            3
         );
     }
 

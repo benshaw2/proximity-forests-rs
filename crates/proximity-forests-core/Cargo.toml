@@ -12,10 +12,11 @@ path = "src/lib.rs"
 
 [features]
 default = ["parallel"]
-parallel = []
+parallel = ["dep:rayon"]
 
 [dependencies]
 crc32fast = "1"
+rayon = { version = "1.11", optional = true }
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 

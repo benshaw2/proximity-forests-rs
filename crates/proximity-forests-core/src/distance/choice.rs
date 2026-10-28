@@ -5,7 +5,7 @@
 //! candidate using that candidate's deterministic distance random stream. The
 //! winning split stores only the resulting [`DistanceConfig`].
 
-use crate::{CoreError, CoreResult, DistanceConfig, ModelRng};
+use crate::{CoreError, CoreResult, DistanceConfig, DistanceWorkShape, ModelRng, WorkUnits};
 
 /// Dataset statistics needed while resolving candidate-local parameters.
 ///
@@ -48,6 +48,27 @@ pub enum DistanceChoice {
     Fixed(DistanceConfig),
     /// Resolves a family once for each split candidate.
     Sampled(SampledDistanceFamily),
+}
+
+impl DistanceChoice {
+    /// Estimates representative work without resolving candidate randomness.
+    ///
+    /// Fixed choices use their concrete configuration. Every currently sampled
+    /// family is dynamic-programming based, so sampled choices use a conservative
+    /// full-matrix estimate. This method is intended for coarse scheduling only.
+    #[must_use]
+    pub fn estimate_work(&self, shape: DistanceWorkShape) -> WorkUnits {
+        match self {
+            Self::Fixed(config) => config.estimate_work(shape),
+            Self::Sampled(_) => {
+                let first = u64::try_from(shape.first_length).unwrap_or(u64::MAX);
+                let second = u64::try_from(shape.second_length).unwrap_or(u64::MAX);
+                let dimensions =
+                    u64::try_from(shape.selected_dimensions.max(1)).unwrap_or(u64::MAX);
+                WorkUnits::new(first.saturating_mul(second).saturating_mul(dimensions))
+            }
+        }
+    }
 }
 
 impl From<DistanceConfig> for DistanceChoice {
@@ -141,5 +162,33 @@ pub fn resolve_distance_choice(
     match choice {
         DistanceChoice::Fixed(config) => Ok(config.clone()),
         DistanceChoice::Sampled(family) => policy.sample(*family, context, rng),
+    }
+}
+
+#[cfg(test)]
+mod work_tests {
+    use super::{DistanceChoice, SampledDistanceFamily};
+    use crate::{DistanceConfig, DistanceWorkShape};
+
+    #[test]
+    fn fixed_choice_uses_configured_distance_work() {
+        let choice = DistanceChoice::Fixed(DistanceConfig::SquaredEuclidean);
+        assert_eq!(
+            choice
+                .estimate_work(DistanceWorkShape::new(32, 32, 1))
+                .get(),
+            32
+        );
+    }
+
+    #[test]
+    fn sampled_choice_uses_conservative_dynamic_programming_work() {
+        let choice = DistanceChoice::Sampled(SampledDistanceFamily::DtwCv);
+        assert_eq!(
+            choice
+                .estimate_work(DistanceWorkShape::new(32, 24, 3))
+                .get(),
+            2304
+        );
     }
 }

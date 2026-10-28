@@ -43,6 +43,15 @@ pub struct NativeProximityForestRegressor {
 
 #[pymethods]
 impl NativeProximityForestRegressor {
+    /// Updates the worker request used by subsequent fit and inference operations.
+    fn set_n_jobs(&mut self, n_jobs: usize) {
+        self.n_jobs = n_jobs;
+    }
+    /// Returns the worker request used by subsequent native operations.
+    #[getter]
+    fn n_jobs_(&self) -> usize {
+        self.n_jobs
+    }
     /// Returns the stable native fitted-model payload used by Python pickle.
     fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
         let bytes = self

@@ -22,7 +22,15 @@ and development packaging.
   `pyproject.toml`
 - provide `test` and `dev` installation extras
 
+- replace independent native thread groups with one bounded operation-scoped
+  execution context
+- add cost-gated candidate evaluation and calibrated query-tree inference tiling
+- allow fitted native estimators to update their worker request without changing
+  serialized forest state
 ### Validation
+
+- verify exact fit and inference equivalence across worker counts
+- calibrate candidate and inference activation thresholds in release mode
 
 - add regression coverage for single-case inference and one-channel 3D input
 - add controlled fit and inference granularity benchmarks to guide the upcoming
@@ -30,7 +38,7 @@ and development packaging.
 
 ### Not yet included
 
-- shared-pool hierarchical parallelism
+- persistent estimator-level executors and finer cross-platform worker calibration
 - native proximity-matrix APIs
 - native imputation APIs
 - public reference-retention workflow

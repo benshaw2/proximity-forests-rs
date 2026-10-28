@@ -35,6 +35,7 @@ mod stopping;
 mod task_selector;
 mod tree;
 mod weighted_sampler;
+mod work_estimate;
 mod workspace;
 
 pub use apply::{
@@ -52,7 +53,7 @@ pub use builder::build_tree_iterative;
 pub use candidate::{CandidateScore, CandidateSplit, ScorePreference, ScoredCandidate};
 pub use candidate_generator::{CandidateIdentity, generate_candidate};
 pub use candidate_router::{partition_multivariate, partition_vectors};
-pub use candidate_selector::{CandidateSelector, SelectedCandidate};
+pub use candidate_selector::{CandidateEvaluation, CandidateSelector, SelectedCandidate};
 pub use child_membership::{ChildMembership, build_child_memberships};
 pub use class_exemplars::{
     classification_node_is_pure, classification_output_is_pure, sample_class_exemplars,
@@ -94,7 +95,10 @@ pub use model::{
     IsolationForest, RegressionForest, RetainedTrainingData, TrainingMetadata,
 };
 pub use node_membership::{NodeMembership, SampleId};
-pub use parallel::{Shared, parallel_indexed};
+pub use parallel::{
+    ExecutionContext, ParallelPolicy, Shared, WorkerBudget, parallel_indexed, parallel_indexed_in,
+    parallel_indexed_init_in,
+};
 pub use partition::{CandidatePartition, GroupedPartition};
 pub use predict::{LeafVisit, traverse_multivariate, traverse_vector};
 pub use regression_builder::{build_multivariate_regression_tree, build_vector_regression_tree};
@@ -112,4 +116,5 @@ pub use tree::{
     SplitNode, TreeBuildStack, TreeNode,
 };
 pub use weighted_sampler::sample_weighted_without_replacement;
+pub use work_estimate::{CandidateBatchShape, InferenceTileShape};
 pub use workspace::TreeWorkspace;

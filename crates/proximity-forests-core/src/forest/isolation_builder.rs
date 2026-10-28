@@ -1,13 +1,14 @@
 //! Iterative isolation-tree entry points.
 
 use super::{
-    CandidateSelectionContext, LeafPayload, MultivariateExemplarBuilder, NodeMembership,
-    ObservationIndex, OwnedObservationStore, ProximityTree, TreeWorkspace, VectorExemplarBuilder,
-    build_tree_iterative, select_multivariate_isolation, select_vector_isolation,
+    CandidateSelectionContext, ExecutionContext, LeafPayload, MultivariateExemplarBuilder,
+    NodeMembership, ObservationIndex, OwnedObservationStore, ProximityTree, TreeWorkspace,
+    VectorExemplarBuilder, build_tree_iterative, select_multivariate_isolation,
+    select_vector_isolation,
 };
 use crate::{
-    CoreResult, DistanceChoice, DistanceSamplingContext, ForestConfig, IsolationCriterion,
-    MultivariateSeriesView, NumericVectorView,
+    CoreResult, DistanceChoice, DistanceSamplingContext, DistanceWorkShape, ForestConfig,
+    IsolationCriterion, MultivariateSeriesView, NumericVectorView,
 };
 
 /// Builds one vector-layout isolation tree iteratively.
@@ -22,8 +23,20 @@ pub fn build_vector_isolation_tree(
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: IsolationCriterion,
+    execution: &ExecutionContext,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
+    let distance_work = distance_catalog
+        .iter()
+        .map(|choice| {
+            choice.estimate_work(DistanceWorkShape::new(
+                distance_sampling.maximum_length,
+                distance_sampling.maximum_length,
+                1,
+            ))
+        })
+        .max()
+        .unwrap_or_default();
     let mut exemplar_builder = VectorExemplarBuilder::new(observations[0].scalar_kind());
     let mut tree = build_tree_iterative(
         config,
@@ -38,8 +51,10 @@ pub fn build_vector_isolation_tree(
                 membership,
                 criterion,
                 CandidateSelectionContext {
+                    execution,
                     distance_catalog,
                     distance_sampling,
+                    distance_work,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count,
@@ -86,8 +101,20 @@ pub fn build_multivariate_isolation_tree(
     available_dimensions: usize,
     exemplar_count: usize,
     criterion: IsolationCriterion,
+    execution: &ExecutionContext,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
+    let distance_work = distance_catalog
+        .iter()
+        .map(|choice| {
+            choice.estimate_work(DistanceWorkShape::new(
+                distance_sampling.maximum_length,
+                distance_sampling.maximum_length,
+                available_dimensions,
+            ))
+        })
+        .max()
+        .unwrap_or_default();
     let mut exemplar_builder = MultivariateExemplarBuilder::new(
         observations[0].scalar_kind(),
         observations[0].dimension_count(),
@@ -105,8 +132,10 @@ pub fn build_multivariate_isolation_tree(
                 membership,
                 criterion,
                 CandidateSelectionContext {
+                    execution,
                     distance_catalog,
                     distance_sampling,
+                    distance_work,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count,

@@ -20,10 +20,10 @@ pub use data::{DataLayout, MultivariateSeriesView, NumericVectorView, TimeAxisVi
 pub use distance::{
     ClosestExemplar, DistanceCapabilities, DistanceChoice, DistanceConfig, DistanceCutoff,
     DistanceEvaluator, DistanceKind, DistanceSamplingContext, DistanceSamplingPolicy,
-    DistanceScratch, DtwArowParameters, DtwParameters, ErpParameters, FiniteF64,
+    DistanceScratch, DistanceWorkShape, DtwArowParameters, DtwParameters, ErpParameters, FiniteF64,
     JavaCompatibleDistanceSampling, LcssParameters, MsmParameters, NoOverlapPolicy,
-    SampledDistanceFamily, ShapeDtwParameters, TweParameters, WeightedDtwParameters, cid,
-    cid_independent, closest_exemplar, cosine, cosine_selected, ddtw, ddtw_dependent,
+    SampledDistanceFamily, ShapeDtwParameters, TweParameters, WeightedDtwParameters, WorkUnits,
+    cid, cid_independent, closest_exemplar, cosine, cosine_selected, ddtw, ddtw_dependent,
     ddtw_independent, derivative_transform, dtw, dtw_arow, dtw_arow_dependent,
     dtw_arow_independent, dtw_dependent, dtw_independent, erp, erp_independent, lcss,
     lcss_independent, manhattan, manhattan_independent, manhattan_selected, msm, msm_independent,

@@ -7,12 +7,13 @@ use crate::{
 };
 
 use super::{
-    BootstrapSample, ClassificationForest, DataRetention, FittedForest, IsolationForest,
-    NodeMembership, ObservationIndex, OwnedMultivariateStore, OwnedObservationStore,
-    OwnedVectorStore, RegressionForest, RetainedTrainingData, TrainingMetadata, TreeWorkspace,
-    build_multivariate_classification_tree, build_multivariate_isolation_tree,
-    build_multivariate_regression_tree, build_vector_classification_tree,
-    build_vector_isolation_tree, build_vector_regression_tree, parallel_indexed,
+    BootstrapSample, ClassificationForest, DataRetention, ExecutionContext, FittedForest,
+    IsolationForest, NodeMembership, ObservationIndex, OwnedMultivariateStore,
+    OwnedObservationStore, OwnedVectorStore, RegressionForest, RetainedTrainingData,
+    TrainingMetadata, TreeWorkspace, build_multivariate_classification_tree,
+    build_multivariate_isolation_tree, build_multivariate_regression_tree,
+    build_vector_classification_tree, build_vector_isolation_tree, build_vector_regression_tree,
+    parallel_indexed_in,
 };
 
 /// Fits a vector-layout classification forest in parallel across trees.
@@ -28,9 +29,10 @@ pub fn fit_vector_classification_forest(
 ) -> CoreResult<ClassificationForest> {
     validate_counts(observations.len(), targets.sample_count())?;
     config.validate()?;
+    let context = ExecutionContext::new(thread_count)?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
+        parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_vector_classification_tree(
@@ -44,6 +46,7 @@ pub fn fit_vector_classification_forest(
                 distance_sampling,
                 available_dimensions,
                 criterion,
+                &context,
                 &mut TreeWorkspace::new(),
             )
         })?
@@ -83,9 +86,10 @@ pub fn fit_multivariate_classification_forest(
             "multivariate observations must have one common channel count",
         ));
     }
+    let context = ExecutionContext::new(thread_count)?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
+        parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_multivariate_classification_tree(
@@ -99,6 +103,7 @@ pub fn fit_multivariate_classification_forest(
                 distance_sampling,
                 dimensions,
                 criterion,
+                &context,
                 &mut TreeWorkspace::new(),
             )
         })?
@@ -128,9 +133,10 @@ pub fn fit_vector_regression_forest(
 ) -> CoreResult<RegressionForest> {
     validate_counts(observations.len(), targets.sample_count())?;
     config.validate()?;
+    let context = ExecutionContext::new(thread_count)?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
+        parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_vector_regression_tree(
@@ -145,6 +151,7 @@ pub fn fit_vector_regression_forest(
                 available_dimensions,
                 exemplar_count,
                 criterion,
+                &context,
                 &mut TreeWorkspace::new(),
             )
         })?
@@ -185,9 +192,10 @@ pub fn fit_multivariate_regression_forest(
             "multivariate observations must have one common channel count",
         ));
     }
+    let context = ExecutionContext::new(thread_count)?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
+        parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_multivariate_regression_tree(
@@ -202,6 +210,7 @@ pub fn fit_multivariate_regression_forest(
                 dimensions,
                 exemplar_count,
                 criterion,
+                &context,
                 &mut TreeWorkspace::new(),
             )
         })?
@@ -230,9 +239,10 @@ pub fn fit_vector_isolation_forest(
 ) -> CoreResult<IsolationForest> {
     config.validate()?;
     let normalization_size = observations.len();
+    let context = ExecutionContext::new(thread_count)?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
+        parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_vector_isolation_tree(
@@ -246,6 +256,7 @@ pub fn fit_vector_isolation_forest(
                 available_dimensions,
                 exemplar_count,
                 criterion,
+                &context,
                 &mut TreeWorkspace::new(),
             )
         })?
@@ -285,9 +296,10 @@ pub fn fit_multivariate_isolation_forest(
         ));
     }
     let normalization_size = observations.len();
+    let context = ExecutionContext::new(thread_count)?;
     let trees = {
         let views = observations;
-        parallel_indexed(config.tree_count.get(), thread_count, |tree_index| {
+        parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) =
                 root_membership(&config, tree_index, views.len())?;
             build_multivariate_isolation_tree(
@@ -301,6 +313,7 @@ pub fn fit_multivariate_isolation_forest(
                 dimensions,
                 exemplar_count,
                 criterion,
+                &context,
                 &mut TreeWorkspace::new(),
             )
         })?

@@ -1,15 +1,15 @@
 //! Iterative classification-tree entry points.
 
 use crate::{
-    ClassificationTargets, CoreResult, DistanceChoice, DistanceSamplingContext, ForestConfig,
-    MultivariateSeriesView, NumericVectorView, SupervisedCriterion,
+    ClassificationTargets, CoreResult, DistanceChoice, DistanceSamplingContext, DistanceWorkShape,
+    ForestConfig, MultivariateSeriesView, NumericVectorView, SupervisedCriterion,
 };
 
 use super::{
-    CandidateSelectionContext, ClassificationLeaf, LeafPayload, MultivariateExemplarBuilder,
-    NodeMembership, ObservationIndex, OwnedObservationStore, ProximityTree, TreeWorkspace,
-    VectorExemplarBuilder, build_tree_iterative, classification_node_is_pure,
-    select_multivariate_classification, select_vector_classification,
+    CandidateSelectionContext, ClassificationLeaf, ExecutionContext, LeafPayload,
+    MultivariateExemplarBuilder, NodeMembership, ObservationIndex, OwnedObservationStore,
+    ProximityTree, TreeWorkspace, VectorExemplarBuilder, build_tree_iterative,
+    classification_node_is_pure, select_multivariate_classification, select_vector_classification,
 };
 
 /// Builds one vector-layout classification tree iteratively.
@@ -24,8 +24,20 @@ pub fn build_vector_classification_tree(
     distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     criterion: SupervisedCriterion,
+    execution: &ExecutionContext,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
+    let distance_work = distance_catalog
+        .iter()
+        .map(|choice| {
+            choice.estimate_work(DistanceWorkShape::new(
+                distance_sampling.maximum_length,
+                distance_sampling.maximum_length,
+                1,
+            ))
+        })
+        .max()
+        .unwrap_or_default();
     let mut exemplar_builder = VectorExemplarBuilder::new(observations[0].scalar_kind());
     let mut tree = build_tree_iterative(
         config,
@@ -44,8 +56,10 @@ pub fn build_vector_classification_tree(
                 targets,
                 criterion,
                 CandidateSelectionContext {
+                    execution,
                     distance_catalog,
                     distance_sampling,
+                    distance_work,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count: 1,
@@ -94,8 +108,20 @@ pub fn build_multivariate_classification_tree(
     distance_sampling: DistanceSamplingContext,
     available_dimensions: usize,
     criterion: SupervisedCriterion,
+    execution: &ExecutionContext,
     workspace: &mut TreeWorkspace,
 ) -> CoreResult<ProximityTree> {
+    let distance_work = distance_catalog
+        .iter()
+        .map(|choice| {
+            choice.estimate_work(DistanceWorkShape::new(
+                distance_sampling.maximum_length,
+                distance_sampling.maximum_length,
+                available_dimensions,
+            ))
+        })
+        .max()
+        .unwrap_or_default();
     let mut exemplar_builder = MultivariateExemplarBuilder::new(
         observations[0].scalar_kind(),
         observations[0].dimension_count(),
@@ -117,8 +143,10 @@ pub fn build_multivariate_classification_tree(
                 targets,
                 criterion,
                 CandidateSelectionContext {
+                    execution,
                     distance_catalog,
                     distance_sampling,
+                    distance_work,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
                     exemplar_count: 1,
