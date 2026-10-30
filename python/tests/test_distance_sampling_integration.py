@@ -41,7 +41,7 @@ def test_each_sampled_family_fits_all_three_estimators(family):
         n_estimators=3,
         n_candidates=2,
         distances=[family],
-        bootstrap=False,
+        sampling="full",
         random_state=17,
         n_jobs=1,
     ).fit(X, y_classification)
@@ -52,7 +52,7 @@ def test_each_sampled_family_fits_all_three_estimators(family):
         n_candidates=2,
         n_exemplars=2,
         distances=[family],
-        bootstrap=False,
+        sampling="full",
         random_state=17,
         n_jobs=1,
     ).fit(X, y_regression)
@@ -63,7 +63,7 @@ def test_each_sampled_family_fits_all_three_estimators(family):
         n_candidates=2,
         n_exemplars=2,
         distances=[family],
-        bootstrap=False,
+        sampling="full",
         random_state=17,
         n_jobs=1,
     ).fit(X)
@@ -83,7 +83,7 @@ def test_fixed_specs_fit_without_becoming_sampled_families():
             DistanceSpec("msm", cost=1.0),
             DistanceSpec("twe", stiffness=0.001, penalty=0.1),
         ],
-        bootstrap=False,
+        sampling="full",
         random_state=29,
         n_jobs=1,
     ).fit(X, y)
@@ -96,7 +96,7 @@ def test_sampled_catalog_is_reproducible():
         n_estimators=7,
         n_candidates=4,
         distances=list(SAMPLED_VECTOR_FAMILIES),
-        bootstrap=True,
+        sampling="bootstrap",
         random_state=101,
         n_jobs=1,
     )
@@ -113,7 +113,7 @@ def test_sampled_catalog_is_scheduling_independent():
         n_estimators=9,
         n_candidates=4,
         distances=list(SAMPLED_VECTOR_FAMILIES),
-        bootstrap=True,
+        sampling="bootstrap",
         random_state=202,
     )
     serial = ProximityForestClassifier(n_jobs=1, **common).fit(X, y)
@@ -134,6 +134,6 @@ def test_nan_input_rejects_catalog_without_missing_support():
     ):
         ProximityForestClassifier(
             n_estimators=3,
-            bootstrap=False,
+            sampling="full",
             random_state=7,
         ).fit(X, y)

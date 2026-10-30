@@ -27,7 +27,7 @@ def test_classifier_candidate_parallelism_matches_sequential_fit():
         n_estimators=1,
         n_candidates=16,
         max_depth=7,
-        bootstrap=False,
+        sampling="full",
         random_state=1729,
     )
     sequential = ProximityForestClassifier(n_jobs=1, **common).fit(X, y)
@@ -46,7 +46,7 @@ def test_regressor_candidate_parallelism_matches_sequential_fit():
         n_candidates=8,
         n_exemplars=2,
         max_depth=7,
-        bootstrap=False,
+        sampling="full",
         random_state=1733,
     )
     sequential = ProximityForestRegressor(n_jobs=1, **common).fit(X, y)
@@ -64,7 +64,7 @@ def test_isolation_candidate_parallelism_matches_sequential_fit():
         n_candidates=8,
         n_exemplars=2,
         max_depth=7,
-        bootstrap=False,
+        sampling="full",
         random_state=1741,
     )
     sequential = ProximityIsolationForest(n_jobs=1, **common).fit(X)

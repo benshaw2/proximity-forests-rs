@@ -4,7 +4,9 @@
 //! version owns a separate DTO graph, allowing runtime refactors without
 //! silently changing persisted bytes.
 
+use crate::{ObservationSampling, SampleSize};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{error::Error, fmt};
@@ -75,7 +77,7 @@ pub(crate) struct ForestDtoV1 {
 pub(crate) struct ForestConfigDtoV1 {
     pub(crate) tree_count: u64,
     pub(crate) candidate_count: u64,
-    pub(crate) bootstrap: bool,
+    pub(crate) observation_sampling: ObservationSamplingDtoV1,
     pub(crate) maximum_depth: Option<u64>,
     pub(crate) minimum_split_size: u64,
     pub(crate) dimension_selection: DimensionSelectionDtoV1,
@@ -103,6 +105,20 @@ pub(crate) enum DimensionSelectionDtoV1 {
     SquareRoot,
     Log2,
     Fraction(f64),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) enum SampleSizeDtoV1 {
+    All,
+    Fixed(u64),
+    Proportion(f64),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) enum ObservationSamplingDtoV1 {
+    Full,
+    Bootstrap(SampleSizeDtoV1),
+    Subsample(SampleSizeDtoV1),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -312,10 +328,10 @@ fn u64_vec_to_usize(values: Vec<u64>, field: &str) -> Result<Vec<usize>, Seriali
         .collect()
 }
 
-impl TryFrom<&super::BootstrapSample> for BootstrapSampleDtoV1 {
+impl TryFrom<&super::TreeSample> for BootstrapSampleDtoV1 {
     type Error = SerializationError;
 
-    fn try_from(sample: &super::BootstrapSample) -> Result<Self, Self::Error> {
+    fn try_from(sample: &super::TreeSample) -> Result<Self, Self::Error> {
         Ok(Self {
             sampled_indices: usize_slice_to_u64(sample.sampled_positions())?,
             counts: usize_slice_to_u64(sample.multiplicities())?,
@@ -324,14 +340,14 @@ impl TryFrom<&super::BootstrapSample> for BootstrapSampleDtoV1 {
     }
 }
 
-impl TryFrom<BootstrapSampleDtoV1> for super::BootstrapSample {
+impl TryFrom<BootstrapSampleDtoV1> for super::TreeSample {
     type Error = SerializationError;
 
     fn try_from(dto: BootstrapSampleDtoV1) -> Result<Self, Self::Error> {
         let sampled_positions = u64_vec_to_usize(dto.sampled_indices, "bootstrap draw")?;
         let multiplicities = u64_vec_to_usize(dto.counts, "bootstrap multiplicity")?;
         let out_of_bag_positions = u64_vec_to_usize(dto.out_of_bag, "out-of-bag index")?;
-        super::BootstrapSample::from_parts(sampled_positions, multiplicities, out_of_bag_positions)
+        super::TreeSample::from_parts(sampled_positions, multiplicities, out_of_bag_positions)
             .map_err(|error| {
                 SerializationError::Conversion(format!("invalid bootstrap metadata: {error}"))
             })
@@ -366,7 +382,7 @@ impl TryFrom<TrainingMetadataDtoV1> for super::TrainingMetadata {
         let bootstrap = dto
             .bootstrap
             .into_iter()
-            .map(super::BootstrapSample::try_from)
+            .map(super::TreeSample::try_from)
             .collect::<Result<Vec<_>, _>>()?;
         if bootstrap
             .iter()
@@ -1798,6 +1814,60 @@ pub(crate) fn isolation_from_bytes(bytes: &[u8]) -> crate::CoreResult<super::Iso
     }
 }
 
+fn sample_size_to_dto(value: SampleSize) -> Result<SampleSizeDtoV1, SerializationError> {
+    Ok(match value {
+        SampleSize::All => SampleSizeDtoV1::All,
+        SampleSize::Fixed(value) => SampleSizeDtoV1::Fixed(
+            u64::try_from(value.get()).map_err(|_| SerializationError::LengthOverflow)?,
+        ),
+        SampleSize::Proportion(value) => SampleSizeDtoV1::Proportion(value),
+    })
+}
+
+fn sample_size_from_dto(value: SampleSizeDtoV1) -> Result<SampleSize, SerializationError> {
+    let value = match value {
+        SampleSizeDtoV1::All => SampleSize::All,
+        SampleSizeDtoV1::Fixed(value) => SampleSize::Fixed(
+            NonZeroUsize::new(u64_to_usize(value, "sample_size")?).ok_or_else(|| {
+                SerializationError::Conversion("sample_size must be positive".to_owned())
+            })?,
+        ),
+        SampleSizeDtoV1::Proportion(value) => SampleSize::Proportion(value),
+    };
+    value
+        .validate()
+        .map_err(|error| SerializationError::Conversion(format!("invalid sample size: {error}")))?;
+    Ok(value)
+}
+
+fn observation_sampling_to_dto(
+    value: ObservationSampling,
+) -> Result<ObservationSamplingDtoV1, SerializationError> {
+    Ok(match value {
+        ObservationSampling::Full => ObservationSamplingDtoV1::Full,
+        ObservationSampling::Bootstrap(size) => {
+            ObservationSamplingDtoV1::Bootstrap(sample_size_to_dto(size)?)
+        }
+        ObservationSampling::Subsample(size) => {
+            ObservationSamplingDtoV1::Subsample(sample_size_to_dto(size)?)
+        }
+    })
+}
+
+fn observation_sampling_from_dto(
+    value: ObservationSamplingDtoV1,
+) -> Result<ObservationSampling, SerializationError> {
+    Ok(match value {
+        ObservationSamplingDtoV1::Full => ObservationSampling::Full,
+        ObservationSamplingDtoV1::Bootstrap(size) => {
+            ObservationSampling::Bootstrap(sample_size_from_dto(size)?)
+        }
+        ObservationSamplingDtoV1::Subsample(size) => {
+            ObservationSampling::Subsample(sample_size_from_dto(size)?)
+        }
+    })
+}
+
 impl TryFrom<&super::ForestConfig> for ForestConfigDtoV1 {
     type Error = SerializationError;
 
@@ -1833,7 +1903,7 @@ impl TryFrom<&super::ForestConfig> for ForestConfigDtoV1 {
                 .map_err(|_| SerializationError::LengthOverflow)?,
             candidate_count: u64::try_from(config.candidate_count.get())
                 .map_err(|_| SerializationError::LengthOverflow)?,
-            bootstrap: config.bootstrap,
+            observation_sampling: observation_sampling_to_dto(config.observation_sampling)?,
             maximum_depth: config
                 .maximum_depth
                 .map(u64::try_from)
@@ -1894,7 +1964,7 @@ impl TryFrom<ForestConfigDtoV1> for super::ForestConfig {
             DataRetentionDtoV1::Reference => super::DataRetention::Reference,
         };
         let mut config = super::ForestConfig::new(tree_count, candidate_count, dto.seed);
-        config.bootstrap = dto.bootstrap;
+        config.observation_sampling = observation_sampling_from_dto(dto.observation_sampling)?;
         config.maximum_depth = dto
             .maximum_depth
             .map(|value| to_usize(value, "maximum_depth"))
@@ -1932,7 +2002,7 @@ mod tests {
                 config: ForestConfigDtoV1 {
                     tree_count: 1,
                     candidate_count: 1,
-                    bootstrap: false,
+                    observation_sampling: ObservationSamplingDtoV1::Full,
                     maximum_depth: None,
                     minimum_split_size: 2,
                     dimension_selection: DimensionSelectionDtoV1::All,
@@ -1979,6 +2049,27 @@ mod tests {
     }
 
     #[test]
+    fn dimension_selection_policies_round_trip() {
+        for selection in [
+            super::super::DimensionSelection::All,
+            super::super::DimensionSelection::Sqrt,
+            super::super::DimensionSelection::Log2,
+            super::super::DimensionSelection::FixedCount(3),
+            super::super::DimensionSelection::Proportion(0.5),
+        ] {
+            let mut config = super::super::ForestConfig::new(
+                NonZeroUsize::new(3).unwrap(),
+                NonZeroUsize::new(2).unwrap(),
+                91,
+            );
+            config.dimension_selection = selection;
+            let dto = ForestConfigDtoV1::try_from(&config).unwrap();
+            let restored = super::super::ForestConfig::try_from(dto).unwrap();
+            assert_eq!(restored.dimension_selection, selection);
+        }
+    }
+
+    #[test]
     fn forest_config_round_trip() {
         use std::num::NonZeroUsize;
         let mut config = super::super::ForestConfig::new(
@@ -1986,7 +2077,7 @@ mod tests {
             NonZeroUsize::new(3).unwrap(),
             91,
         );
-        config.bootstrap = false;
+        config.observation_sampling = ObservationSampling::Full;
         config.maximum_depth = Some(12);
         config.dimension_selection = super::super::DimensionSelection::Proportion(0.5);
         config.branch_tie_policy = super::super::TiePolicy::First;
@@ -2009,7 +2100,7 @@ mod tests {
         let metadata = super::super::TrainingMetadata::new(
             3,
             vec![
-                super::super::BootstrapSample::from_parts(vec![0, 0, 2], vec![2, 0, 1], vec![1])
+                super::super::TreeSample::from_parts(vec![0, 0, 2], vec![2, 0, 1], vec![1])
                     .unwrap(),
             ],
         );
@@ -2021,13 +2112,36 @@ mod tests {
     }
 
     #[test]
+    fn observation_sampling_policies_round_trip() {
+        for policy in [
+            ObservationSampling::Full,
+            ObservationSampling::Bootstrap(SampleSize::All),
+            ObservationSampling::Bootstrap(SampleSize::Fixed(NonZeroUsize::new(73).unwrap())),
+            ObservationSampling::Bootstrap(SampleSize::Proportion(0.75)),
+            ObservationSampling::Subsample(SampleSize::All),
+            ObservationSampling::Subsample(SampleSize::Fixed(NonZeroUsize::new(256).unwrap())),
+            ObservationSampling::Subsample(SampleSize::Proportion(0.4)),
+        ] {
+            let dto = observation_sampling_to_dto(policy).unwrap();
+            assert_eq!(observation_sampling_from_dto(dto).unwrap(), policy);
+        }
+    }
+
+    #[test]
+    fn invalid_persisted_sample_sizes_are_rejected() {
+        assert!(sample_size_from_dto(SampleSizeDtoV1::Fixed(0)).is_err());
+        assert!(sample_size_from_dto(SampleSizeDtoV1::Proportion(0.0)).is_err());
+        assert!(sample_size_from_dto(SampleSizeDtoV1::Proportion(1.1)).is_err());
+    }
+
+    #[test]
     fn inconsistent_bootstrap_metadata_is_rejected() {
         let dto = BootstrapSampleDtoV1 {
             sampled_indices: vec![0, 0, 2],
             counts: vec![1, 1, 1],
             out_of_bag: Vec::new(),
         };
-        assert!(super::super::BootstrapSample::try_from(dto).is_err());
+        assert!(super::super::TreeSample::try_from(dto).is_err());
     }
 
     #[test]

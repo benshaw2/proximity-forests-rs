@@ -25,7 +25,7 @@ def exercise(X, classifier_distance, regressor_distance=None, isolation_distance
     clf = ProximityForestClassifier(
         n_estimators=5,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=101,
         distances=[classifier_distance],
     ).fit(X, yc)
@@ -44,7 +44,7 @@ def exercise(X, classifier_distance, regressor_distance=None, isolation_distance
         n_estimators=5,
         n_candidates=4,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=102,
         distances=[regressor_distance],
     ).fit(X, yr)
@@ -60,7 +60,7 @@ def exercise(X, classifier_distance, regressor_distance=None, isolation_distance
         n_estimators=5,
         n_candidates=4,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=103,
         distances=[isolation_distance],
     ).fit(X)
@@ -112,7 +112,7 @@ def test_all_missing_query_routes_deterministically():
     model = ProximityForestClassifier(
         n_estimators=5,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=23,
         distances=["nan_squared_euclidean"],
     ).fit(X, y)
@@ -129,7 +129,7 @@ def test_query_infinity_rejected_even_for_leaf_only_model():
     y = np.array([0, 0, 1, 1])
     model = ProximityForestClassifier(
         n_estimators=1,
-        bootstrap=False,
+        sampling="full",
         distances=["nan_squared_euclidean"],
     ).fit(X, y)
     with pytest.raises(ValueError, match="infinity"):

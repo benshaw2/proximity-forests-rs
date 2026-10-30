@@ -5,7 +5,10 @@
 //! candidate using that candidate's deterministic distance random stream. The
 //! winning split stores only the resulting [`DistanceConfig`].
 
-use crate::{CoreError, CoreResult, DistanceConfig, DistanceWorkShape, ModelRng, WorkUnits};
+use crate::{
+    CoreError, CoreResult, DimensionSelectionSupport, DistanceConfig, DistanceWorkShape, ModelRng,
+    WorkUnits,
+};
 
 /// Dataset statistics needed while resolving candidate-local parameters.
 ///
@@ -51,6 +54,15 @@ pub enum DistanceChoice {
 }
 
 impl DistanceChoice {
+    /// Returns dimension-selection semantics without resolving candidate randomness.
+    #[must_use]
+    pub const fn dimension_selection_support(&self) -> DimensionSelectionSupport {
+        match self {
+            Self::Fixed(config) => config.capabilities().dimension_selection,
+            Self::Sampled(family) => family.dimension_selection_support(),
+        }
+    }
+
     /// Estimates representative work without resolving candidate randomness.
     ///
     /// Fixed choices use their concrete configuration. Every currently sampled
@@ -141,6 +153,45 @@ pub enum SampledDistanceFamily {
     WddtwDependent,
 }
 
+impl SampledDistanceFamily {
+    /// Returns the dimension-selection semantics shared by every configuration
+    /// that this sampled family can resolve to.
+    #[must_use]
+    pub const fn dimension_selection_support(self) -> DimensionSelectionSupport {
+        use DimensionSelectionSupport as S;
+        use SampledDistanceFamily as F;
+        match self {
+            F::Dtw
+            | F::DtwCv
+            | F::Ddtw
+            | F::DdtwCv
+            | F::Wdtw
+            | F::Wddtw
+            | F::Erp
+            | F::Lcss
+            | F::Msm
+            | F::Twe => S::None,
+
+            F::DtwIndependent
+            | F::DtwCvIndependent
+            | F::DdtwIndependent
+            | F::DdtwCvIndependent
+            | F::WdtwIndependent
+            | F::WddtwIndependent
+            | F::ErpIndependent
+            | F::LcssIndependent
+            | F::MsmIndependent
+            | F::TweIndependent
+            | F::DtwDependent
+            | F::DtwCvDependent
+            | F::DdtwDependent
+            | F::DdtwCvDependent
+            | F::WdtwDependent
+            | F::WddtwDependent => S::MultivariateChannels,
+        }
+    }
+}
+
 /// Policy that turns a sampled family into a concrete configuration.
 pub trait DistanceSamplingPolicy: Sync {
     /// Resolves one family using candidate-local randomness.
@@ -189,6 +240,34 @@ mod work_tests {
                 .estimate_work(DistanceWorkShape::new(32, 24, 3))
                 .get(),
             2304
+        );
+    }
+
+    #[test]
+    fn fixed_choice_delegates_dimension_selection_semantics() {
+        use crate::DimensionSelectionSupport;
+        assert_eq!(
+            DistanceChoice::Fixed(DistanceConfig::SquaredEuclidean).dimension_selection_support(),
+            DimensionSelectionSupport::VectorFeatures
+        );
+        assert_eq!(
+            DistanceChoice::Fixed(DistanceConfig::Dtw(Default::default()))
+                .dimension_selection_support(),
+            DimensionSelectionSupport::None
+        );
+    }
+
+    #[test]
+    fn sampled_families_advertise_semantics_before_resolution() {
+        use crate::DimensionSelectionSupport;
+        assert_eq!(
+            DistanceChoice::Sampled(SampledDistanceFamily::DtwCv).dimension_selection_support(),
+            DimensionSelectionSupport::None
+        );
+        assert_eq!(
+            DistanceChoice::Sampled(SampledDistanceFamily::DtwCvDependent)
+                .dimension_selection_support(),
+            DimensionSelectionSupport::MultivariateChannels
         );
     }
 }

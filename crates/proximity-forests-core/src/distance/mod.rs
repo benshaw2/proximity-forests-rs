@@ -28,7 +28,7 @@ mod weighted_dtw;
 mod work;
 
 pub use arow::{dtw_arow, dtw_arow_dependent, dtw_arow_independent};
-pub use capabilities::DistanceCapabilities;
+pub use capabilities::{DimensionSelectionSupport, DistanceCapabilities};
 pub use choice::{
     DistanceChoice, DistanceSamplingContext, DistanceSamplingPolicy, SampledDistanceFamily,
     resolve_distance_choice,

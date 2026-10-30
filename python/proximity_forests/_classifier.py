@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import numpy as np
+import warnings
 
 from ._core import _NativeProximityForestClassifier
 from ._distances import normalize_distances
+from ._sampling import normalize_sampling
+from ._max_features import normalize_max_features
 
 
 class ProximityForestClassifier:
@@ -23,21 +26,27 @@ class ProximityForestClassifier:
         n_candidates: int = 5,
         max_depth: int | None = None,
         min_samples_split: int = 2,
+        max_features=None,
         distances="default",
-        bootstrap: bool = True,
+        sampling: str = "bootstrap",
+        sample_size=None,
         random_state: int | None = None,
         n_jobs: int | None = 1,
         data_retention: str = "exemplars",
+        oob_score: bool = False,
     ) -> None:
         self.n_estimators = n_estimators
         self.n_candidates = n_candidates
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
+        self.max_features = max_features
         self.distances = distances
-        self.bootstrap = bootstrap
+        self.sampling = sampling
+        self.sample_size = sample_size
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.data_retention = data_retention
+        self.oob_score = oob_score
 
     def fit(self, X, y):
         X, layout = self._validate_X(X, fitting=True)
@@ -57,10 +66,13 @@ class ProximityForestClassifier:
         encoded_y = np.ascontiguousarray(np.column_stack(encoded), dtype=np.uint32)
         distance_layout = "multivariate" if layout == "unequal_multivariate" else layout
         distances = list(normalize_distances(self.distances, layout=distance_layout))
+        sampling, sample_size = normalize_sampling(self.sampling, self.sample_size, default_sampling="bootstrap")
+        for name in ("oob_decision_function_", "oob_prediction_", "oob_vote_counts_", "oob_score_"):
+            self.__dict__.pop(name, None)
         self._native = _NativeProximityForestClassifier(
             n_estimators=int(self.n_estimators), n_candidates=int(self.n_candidates),
             max_depth=self.max_depth, min_samples_split=int(self.min_samples_split),
-            bootstrap=bool(self.bootstrap), random_state=0 if self.random_state is None else int(self.random_state),
+            max_features=normalize_max_features(self.max_features), sampling=sampling, sample_size=sample_size, random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
             data_retention=str(self.data_retention), distances=distances,
         )
@@ -84,6 +96,27 @@ class ProximityForestClassifier:
             self.target_type_ = "multiclass-multioutput"
         self.n_features_in_ = X[0].shape[0] if layout == "unequal_multivariate" else X.shape[1]
         self.data_retention_ = str(self.data_retention)
+        if self.oob_score:
+            method = self._native.oob_unequal if layout == "unequal_multivariate" else (
+                self._native.oob_multivariate if layout == "multivariate" else self._native.oob
+            )
+            probabilities, encoded_predictions, votes, score = method(
+                X, encoded_y, [len(v) for v in classes]
+            )
+            self.oob_vote_counts_ = np.asarray(votes, dtype=np.int64)
+            matrices = [np.asarray(values, dtype=float) for values in probabilities]
+            self.oob_decision_function_ = matrices[0] if self._target_was_1d else matrices
+            encoded = np.asarray(encoded_predictions, dtype=object).reshape(len(X), len(classes))
+            decoded = np.empty(encoded.shape, dtype=object)
+            decoded[:] = np.nan
+            for output, labels in enumerate(classes):
+                valid = np.array([value is not None for value in encoded[:, output]])
+                if np.any(valid):
+                    decoded[valid, output] = labels[np.asarray(encoded[valid, output], dtype=int)]
+            self.oob_prediction_ = decoded[:, 0] if self._target_was_1d else decoded
+            self.oob_score_ = float(score)
+            if np.any(self.oob_vote_counts_ == 0):
+                warnings.warn("Some training samples have no OOB votes; their OOB results are NaN.", RuntimeWarning, stacklevel=2)
         return self
 
     def predict(self, X):
@@ -134,15 +167,17 @@ class ProximityForestClassifier:
     def __setstate__(self, state):
         payload = state.pop("_native_payload", None)
         self.__dict__.update(state)
+        self.oob_score = bool(getattr(self, "oob_score", False))
         if payload is None:
             self._native = None
             return
+        sampling, sample_size = normalize_sampling(self.sampling, self.sample_size, default_sampling="bootstrap")
         self._native = _NativeProximityForestClassifier(
             n_estimators=int(self.n_estimators),
             n_candidates=int(self.n_candidates),
             max_depth=self.max_depth,
             min_samples_split=int(self.min_samples_split),
-            bootstrap=bool(self.bootstrap),
+            max_features=normalize_max_features(self.max_features), sampling=sampling, sample_size=sample_size,
             random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
             data_retention=str(self.data_retention),
@@ -193,11 +228,14 @@ class ProximityForestClassifier:
             "n_candidates": self.n_candidates,
             "max_depth": self.max_depth,
             "min_samples_split": self.min_samples_split,
+            "max_features": self.max_features,
             "distances": self.distances,
-            "bootstrap": self.bootstrap,
+            "sampling": self.sampling,
+            "sample_size": self.sample_size,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,
             "data_retention": self.data_retention,
+            "oob_score": self.oob_score,
         }
 
     def set_params(self, **params):

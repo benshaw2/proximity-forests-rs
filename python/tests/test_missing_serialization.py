@@ -28,7 +28,7 @@ def test_nan_euclidean_classifier_round_trip(retention, policy):
     model = ProximityForestClassifier(
         n_estimators=7,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=73,
         data_retention=retention,
         distances=[DistanceSpec("nan_squared_euclidean", no_overlap=policy)],
@@ -49,7 +49,7 @@ def test_nan_euclidean_regression_and_isolation_round_trip(retention):
         n_estimators=7,
         n_candidates=4,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=79,
         data_retention=retention,
         distances=["nan_squared_euclidean"],
@@ -62,7 +62,7 @@ def test_nan_euclidean_regression_and_isolation_round_trip(retention):
         n_estimators=7,
         n_candidates=4,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=83,
         data_retention=retention,
         distances=["nan_squared_euclidean"],
@@ -84,7 +84,7 @@ def test_dtw_arow_multivariate_round_trip(distance):
     model = ProximityForestClassifier(
         n_estimators=5,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=97,
         distances=[DistanceSpec(distance, window=4)],
         data_retention="copy",
@@ -110,7 +110,7 @@ def test_unequal_dtw_arow_round_trip_with_missing_values():
     model = ProximityForestClassifier(
         n_estimators=5,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=103,
         distances=["dtw_arow_i"],
         data_retention="copy",
@@ -127,7 +127,7 @@ def test_complete_data_missing_distance_round_trip():
     X = np.nan_to_num(X)
     model = ProximityForestClassifier(
         n_estimators=5,
-        bootstrap=False,
+        sampling="full",
         random_state=107,
         distances=["squared_euclidean", "nan_squared_euclidean"],
     ).fit(X, y)

@@ -2,7 +2,10 @@
 
 use std::num::NonZeroUsize;
 
-use crate::{CoreError, CoreResult, DimensionSelection, IsolationCriterion, SupervisedCriterion};
+use crate::{
+    CoreError, CoreResult, DimensionSelection, IsolationCriterion, ObservationSampling,
+    SupervisedCriterion,
+};
 
 use super::{DataRetention, ExternalTrainingData};
 
@@ -23,7 +26,7 @@ pub struct ForestConfig {
     /// Number of split candidates evaluated at each eligible node.
     pub candidate_count: NonZeroUsize,
     /// Whether each tree trains on a size-preserving bootstrap sample.
-    pub bootstrap: bool,
+    pub observation_sampling: ObservationSampling,
     /// Maximum depth, or no explicit depth limit.
     pub maximum_depth: Option<usize>,
     /// Minimum effective bootstrap occurrences required to split a node.
@@ -49,7 +52,7 @@ impl ForestConfig {
         Self {
             tree_count,
             candidate_count,
-            bootstrap: true,
+            observation_sampling: ObservationSampling::default(),
             maximum_depth: None,
             minimum_split_size: NonZeroUsize::MIN,
             dimension_selection: DimensionSelection::All,
@@ -69,6 +72,7 @@ impl ForestConfig {
     /// maximum depth of zero.
     pub fn validate(&self) -> CoreResult<()> {
         self.dimension_selection.validate()?;
+        self.observation_sampling.validate()?;
         if self.data_retention == DataRetention::Reference && self.external_training_data.is_none()
         {
             return Err(CoreError::invalid_configuration(

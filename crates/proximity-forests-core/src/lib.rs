@@ -18,26 +18,27 @@ pub mod target;
 
 pub use data::{DataLayout, MultivariateSeriesView, NumericVectorView, TimeAxisView, VectorRole};
 pub use distance::{
-    ClosestExemplar, DistanceCapabilities, DistanceChoice, DistanceConfig, DistanceCutoff,
-    DistanceEvaluator, DistanceKind, DistanceSamplingContext, DistanceSamplingPolicy,
-    DistanceScratch, DistanceWorkShape, DtwArowParameters, DtwParameters, ErpParameters, FiniteF64,
-    JavaCompatibleDistanceSampling, LcssParameters, MsmParameters, NoOverlapPolicy,
-    SampledDistanceFamily, ShapeDtwParameters, TweParameters, WeightedDtwParameters, WorkUnits,
-    cid, cid_independent, closest_exemplar, cosine, cosine_selected, ddtw, ddtw_dependent,
-    ddtw_independent, derivative_transform, dtw, dtw_arow, dtw_arow_dependent,
-    dtw_arow_independent, dtw_dependent, dtw_independent, erp, erp_independent, lcss,
-    lcss_independent, manhattan, manhattan_independent, manhattan_selected, msm, msm_independent,
-    nan_squared_euclidean, nan_squared_euclidean_independent, nan_squared_euclidean_selected,
-    resolve_distance_choice, sbd, sbd_independent, shape_hog_1d_dtw, shape_hog_1d_dtw_independent,
-    shape_hog_dtw, squared_euclidean, squared_euclidean_independent, squared_euclidean_selected,
-    twe, twe_independent, wddtw, wddtw_dependent, wddtw_independent, wdtw, wdtw_dependent,
-    wdtw_independent,
+    ClosestExemplar, DimensionSelectionSupport, DistanceCapabilities, DistanceChoice,
+    DistanceConfig, DistanceCutoff, DistanceEvaluator, DistanceKind, DistanceSamplingContext,
+    DistanceSamplingPolicy, DistanceScratch, DistanceWorkShape, DtwArowParameters, DtwParameters,
+    ErpParameters, FiniteF64, JavaCompatibleDistanceSampling, LcssParameters, MsmParameters,
+    NoOverlapPolicy, SampledDistanceFamily, ShapeDtwParameters, TweParameters,
+    WeightedDtwParameters, WorkUnits, cid, cid_independent, closest_exemplar, cosine,
+    cosine_selected, ddtw, ddtw_dependent, ddtw_independent, derivative_transform, dtw, dtw_arow,
+    dtw_arow_dependent, dtw_arow_independent, dtw_dependent, dtw_independent, erp, erp_independent,
+    lcss, lcss_independent, manhattan, manhattan_independent, manhattan_selected, msm,
+    msm_independent, nan_squared_euclidean, nan_squared_euclidean_independent,
+    nan_squared_euclidean_selected, resolve_distance_choice, sbd, sbd_independent,
+    shape_hog_1d_dtw, shape_hog_1d_dtw_independent, shape_hog_dtw, squared_euclidean,
+    squared_euclidean_independent, squared_euclidean_selected, twe, twe_independent, wddtw,
+    wddtw_dependent, wddtw_independent, wdtw, wdtw_dependent, wdtw_independent,
 };
 pub use error::{CoreError, CoreResult};
 pub use forest::{
-    BootstrapSample, ClassificationConfig, DimensionSelection, ForestConfig, IsolationConfig,
-    NodeMembership, RegressionConfig, SampleId, TiePolicy, sample_dimensions,
-    sample_weighted_without_replacement,
+    ClassificationConfig, DimensionSelection, ForestConfig, IsolationConfig, NodeMembership,
+    ObservationSampling, OobClassificationResult, OobMembership, OobRegressionResult,
+    RegressionConfig, SampleId, SampleSize, TiePolicy, TreeSample, oob_execution_context,
+    parallel_oob_rows_in, sample_dimensions, sample_weighted_without_replacement,
 };
 pub use purity::{IsolationCriterion, SupervisedCriterion};
 pub use random::{ModelRng, RandomPurpose, SeedMixer};

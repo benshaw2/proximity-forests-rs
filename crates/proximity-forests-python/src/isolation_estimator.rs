@@ -6,9 +6,9 @@ use numpy::{IntoPyArray, PyArray1, PyArray2};
 use proximity_forests_core::IsolationCriterion;
 
 use proximity_forests_core::forest::{
-    DimensionSelection, ForestConfig, IsolationForest, anomaly_scores_multivariate_many,
-    anomaly_scores_vector_many, apply_multivariate_many, apply_vector_many,
-    fit_multivariate_isolation_forest, fit_vector_isolation_forest,
+    ForestConfig, IsolationForest, anomaly_scores_multivariate_many, anomaly_scores_vector_many,
+    apply_multivariate_many, apply_vector_many, fit_multivariate_isolation_forest,
+    fit_vector_isolation_forest,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -19,7 +19,10 @@ use crate::{
         parse_multivariate_catalog, parse_vector_catalog, validate_missing_compatibility,
     },
     error::core_error,
-    input::{MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention},
+    input::{
+        MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention,
+        parse_dimension_selection, parse_observation_sampling,
+    },
 };
 
 /// Rust-backed isolation estimator used by the public Python wrapper.
@@ -30,7 +33,9 @@ pub struct NativeProximityIsolationForest {
     n_exemplars: usize,
     max_depth: Option<usize>,
     min_samples_split: usize,
-    bootstrap: bool,
+    max_features: String,
+    sampling: String,
+    sample_size: String,
     random_state: u64,
     n_jobs: usize,
     data_retention: String,
@@ -89,7 +94,7 @@ impl NativeProximityIsolationForest {
 
     #[new]
     #[pyo3(signature = (n_estimators=100, n_candidates=5, n_exemplars=2,
-        max_depth=None, min_samples_split=2, bootstrap=false,
+        max_depth=None, min_samples_split=2, max_features=String::from("all"), sampling=String::from("subsample"), sample_size=String::from("fixed:256"),
         random_state=0, n_jobs=1, data_retention=String::from("exemplars"), distances=vec![String::from("squared_euclidean")]))]
     fn new(
         n_estimators: usize,
@@ -97,7 +102,9 @@ impl NativeProximityIsolationForest {
         n_exemplars: usize,
         max_depth: Option<usize>,
         min_samples_split: usize,
-        bootstrap: bool,
+        max_features: String,
+        sampling: String,
+        sample_size: String,
         random_state: u64,
         n_jobs: usize,
         data_retention: String,
@@ -114,7 +121,9 @@ impl NativeProximityIsolationForest {
             n_exemplars,
             max_depth,
             min_samples_split,
-            bootstrap,
+            max_features,
+            sampling,
+            sample_size,
             random_state,
             n_jobs,
             data_retention,
@@ -147,11 +156,12 @@ impl NativeProximityIsolationForest {
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),
             self.random_state,
         );
-        config.bootstrap = self.bootstrap;
+        config.observation_sampling =
+            parse_observation_sampling(&self.sampling, &self.sample_size)?;
         config.maximum_depth = self.max_depth;
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
-        config.dimension_selection = DimensionSelection::All;
+        config.dimension_selection = parse_dimension_selection(&self.max_features)?;
         configure_data_retention(&mut config, &self.data_retention)?;
         let feature_count = input.columns();
         let model = input.with_vector_views(|views| {
@@ -185,10 +195,11 @@ impl NativeProximityIsolationForest {
             NonZeroUsize::new(self.n_candidates).unwrap(),
             self.random_state,
         );
-        config.bootstrap = self.bootstrap;
+        config.observation_sampling =
+            parse_observation_sampling(&self.sampling, &self.sample_size)?;
         config.maximum_depth = self.max_depth;
         config.minimum_split_size = NonZeroUsize::new(self.min_samples_split).unwrap();
-        config.dimension_selection = DimensionSelection::All;
+        config.dimension_selection = parse_dimension_selection(&self.max_features)?;
         configure_data_retention(&mut config, &self.data_retention)?;
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_isolation_forest(
@@ -275,11 +286,12 @@ impl NativeProximityIsolationForest {
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),
             self.random_state,
         );
-        config.bootstrap = self.bootstrap;
+        config.observation_sampling =
+            parse_observation_sampling(&self.sampling, &self.sample_size)?;
         config.maximum_depth = self.max_depth;
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
-        config.dimension_selection = DimensionSelection::All;
+        config.dimension_selection = parse_dimension_selection(&self.max_features)?;
         configure_data_retention(&mut config, &self.data_retention)?;
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_isolation_forest(

@@ -27,6 +27,17 @@ impl ClassificationPrediction {
     pub fn probabilities(&self, output: usize) -> Option<&[(u32, f64)]> {
         self.probabilities.get(output).map(Vec::as_slice)
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts_for_test(
+        classes: Vec<u32>,
+        probabilities: Vec<Vec<(u32, f64)>>,
+    ) -> Self {
+        Self {
+            classes,
+            probabilities,
+        }
+    }
 }
 
 /// Predicts one vector observation.

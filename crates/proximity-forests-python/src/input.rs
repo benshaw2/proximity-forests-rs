@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use crate::error::core_error;
 use numpy::{PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
 use proximity_forests_core::forest::{
     DataRetention, ExternalDataFormat, ExternalTrainingData, ForestConfig,
@@ -612,4 +613,82 @@ pub fn configure_data_retention(config: &mut ForestConfig, value: &str) -> PyRes
     config.data_retention = retention;
     config.external_training_data = None;
     Ok(())
+}
+
+/// Parses the validated Python observation-sampling representation.
+pub(crate) fn parse_observation_sampling(
+    sampling: &str,
+    sample_size: &str,
+) -> PyResult<proximity_forests_core::ObservationSampling> {
+    use proximity_forests_core::{ObservationSampling, SampleSize};
+    use std::num::NonZeroUsize;
+
+    let size = if sample_size == "all" {
+        SampleSize::All
+    } else if let Some(value) = sample_size.strip_prefix("fixed:") {
+        let value = value
+            .parse::<usize>()
+            .map_err(|_| PyValueError::new_err("fixed sample_size must be a positive integer"))?;
+        SampleSize::Fixed(
+            NonZeroUsize::new(value)
+                .ok_or_else(|| PyValueError::new_err("fixed sample_size must be positive"))?,
+        )
+    } else if let Some(value) = sample_size.strip_prefix("proportion:") {
+        let value = value
+            .parse::<f64>()
+            .map_err(|_| PyValueError::new_err("proportional sample_size must be numeric"))?;
+        let size = SampleSize::Proportion(value);
+        size.validate().map_err(core_error)?;
+        size
+    } else {
+        return Err(PyValueError::new_err(
+            "sample_size must be encoded as all, fixed:<n>, or proportion:<p>",
+        ));
+    };
+    match sampling {
+        "full" if sample_size == "all" => Ok(ObservationSampling::Full),
+        "full" => Err(PyValueError::new_err(
+            "sample_size must be all when sampling is full",
+        )),
+        "bootstrap" => Ok(ObservationSampling::Bootstrap(size)),
+        "subsample" => Ok(ObservationSampling::Subsample(size)),
+        _ => Err(PyValueError::new_err(
+            "sampling must be full, bootstrap, or subsample",
+        )),
+    }
+}
+
+/// Parses the validated Python max_features representation.
+pub(crate) fn parse_dimension_selection(
+    value: &str,
+) -> PyResult<proximity_forests_core::forest::DimensionSelection> {
+    use proximity_forests_core::forest::DimensionSelection;
+    if value == "all" {
+        return Ok(DimensionSelection::All);
+    }
+    if value == "sqrt" {
+        return Ok(DimensionSelection::Sqrt);
+    }
+    if value == "log2" {
+        return Ok(DimensionSelection::Log2);
+    }
+    if let Some(value) = value.strip_prefix("fixed:") {
+        let count = value
+            .parse::<usize>()
+            .map_err(|_| PyValueError::new_err("fixed max_features must be a positive integer"))?;
+        let selection = DimensionSelection::FixedCount(count);
+        selection.validate().map_err(core_error)?;
+        return Ok(selection);
+    }
+    if let Some(value) = value.strip_prefix("proportion:") {
+        let proportion = value
+            .parse::<f64>()
+            .map_err(|_| PyValueError::new_err("proportional max_features must be numeric"))?;
+        let selection = DimensionSelection::Proportion(proportion);
+        selection.validate().map_err(core_error)?;
+        return Ok(selection);
+    }
+    Err(PyValueError::new_err(
+        "max_features must be encoded as all, sqrt, log2, fixed:<n>, or proportion:<p>",
+    ))
 }

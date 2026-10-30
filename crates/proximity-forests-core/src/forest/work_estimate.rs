@@ -62,6 +62,27 @@ impl InferenceTileShape {
 /// future work.
 const MIN_PARALLEL_INFERENCE_CELLS: usize = 64;
 
+/// Minimum routed OOB tree votes that justify entering a parallel pool.
+///
+/// OOB row work is irregular, but every routed vote requires one complete tree
+/// traversal. A conservative boundary of 64 mirrors the calibrated inference
+/// cell gate and preserves a genuinely pool-free path for tiny fits.
+const MIN_PARALLEL_OOB_VOTES: usize = 64;
+
+/// Resolves the worker request for one OOB result calculation.
+///
+/// `total_votes` is the sum of the compact membership row lengths. Returning
+/// one prevents pool construction for explicit sequential requests and small
+/// OOB workloads. Zero retains automatic hardware selection above the gate.
+#[must_use]
+pub(super) fn oob_thread_count(sample_count: usize, total_votes: usize, requested: usize) -> usize {
+    if requested == 1 || sample_count < 2 || total_votes < MIN_PARALLEL_OOB_VOTES {
+        1
+    } else {
+        requested
+    }
+}
+
 /// Resolves the external worker request for one inference matrix.
 ///
 /// Returning one preserves a genuinely pool-free path below the activation
@@ -229,6 +250,15 @@ mod tests {
         let plan = InferenceTilePlan::new(100, 2, 4, 2);
         assert!(plan.tile_count() >= 4);
         assert!(plan.tile(plan.tile_count()).is_none());
+    }
+
+    #[test]
+    fn oob_gate_preserves_pool_free_small_work() {
+        assert_eq!(super::oob_thread_count(128, 63, 8), 1);
+        assert_eq!(super::oob_thread_count(128, 64, 8), 8);
+        assert_eq!(super::oob_thread_count(128, 64, 0), 0);
+        assert_eq!(super::oob_thread_count(1, 1_000, 8), 1);
+        assert_eq!(super::oob_thread_count(128, 1_000, 1), 1);
     }
 
     #[test]

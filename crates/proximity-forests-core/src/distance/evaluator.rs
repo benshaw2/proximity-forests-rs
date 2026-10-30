@@ -172,3 +172,147 @@ fn wrong_layout(config: &DistanceConfig, layout: &str) -> CoreError {
         config.kind()
     ))
 }
+
+#[cfg(test)]
+mod selected_dimension_contract_tests {
+    use super::DistanceEvaluator;
+    use crate::{
+        DistanceConfig, DistanceCutoff, DistanceScratch, DtwArowParameters, DtwParameters,
+        MultivariateSeriesView, NoOverlapPolicy, NumericVectorView, ShapeDtwParameters,
+    };
+
+    fn vector_distance(config: DistanceConfig, second: &[f64], selected: &[usize]) -> f64 {
+        DistanceEvaluator::new(config)
+            .evaluate_vector(
+                NumericVectorView::from_f64(&[1.0, 2.0, 3.0, 4.0]),
+                NumericVectorView::from_f64(second),
+                Some(selected),
+                DistanceCutoff::None,
+                &mut DistanceScratch::new(),
+            )
+            .expect("selected vector distance")
+    }
+
+    fn multivariate_distance(
+        config: DistanceConfig,
+        second_values: &[f64],
+        selected: &[usize],
+    ) -> f64 {
+        let first = MultivariateSeriesView::contiguous_f64(
+            &[1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+            3,
+            3,
+        )
+        .expect("first series");
+        let second =
+            MultivariateSeriesView::contiguous_f64(second_values, 3, 3).expect("second series");
+        DistanceEvaluator::new(config)
+            .evaluate_multivariate(
+                first,
+                second,
+                Some(selected),
+                DistanceCutoff::None,
+                &mut DistanceScratch::new(),
+            )
+            .expect("selected multivariate distance")
+    }
+
+    #[test]
+    fn vector_feature_kernels_ignore_unselected_positions() {
+        let baseline = [2.0, 2.0, 5.0, 4.0];
+        let mutated = [2.0, -9_999.0, 5.0, 8_888.0];
+        for config in [
+            DistanceConfig::SquaredEuclidean,
+            DistanceConfig::Manhattan,
+            DistanceConfig::Cosine,
+            DistanceConfig::NaNSquaredEuclidean {
+                no_overlap: NoOverlapPolicy::Infinite,
+            },
+        ] {
+            assert_eq!(
+                vector_distance(config.clone(), &baseline, &[0, 2]),
+                vector_distance(config, &mutated, &[0, 2]),
+            );
+        }
+    }
+
+    #[test]
+    fn independent_and_dependent_dtw_ignore_unselected_channels() {
+        let baseline = [1.0, 1.0, 3.0, 10.0, 19.0, 31.0, 100.0, 200.0, 300.0];
+        let mutated = [
+            1.0, 1.0, 3.0, -9_000.0, 7_000.0, -5_000.0, 100.0, 200.0, 300.0,
+        ];
+        for config in [
+            DistanceConfig::DtwIndependent(DtwParameters::default()),
+            DistanceConfig::DtwDependent(DtwParameters::default()),
+        ] {
+            assert_eq!(
+                multivariate_distance(config.clone(), &baseline, &[0, 2]),
+                multivariate_distance(config, &mutated, &[0, 2]),
+            );
+        }
+    }
+
+    #[test]
+    fn shape_and_missing_aware_paths_ignore_unselected_channels() {
+        let complete = [1.0, 1.0, 3.0, 10.0, 19.0, 31.0, 100.0, 200.0, 300.0];
+        let complete_mutated = [
+            1.0, 1.0, 3.0, -9_000.0, 7_000.0, -5_000.0, 100.0, 200.0, 300.0,
+        ];
+        for config in [
+            DistanceConfig::ShapeHog1dDtwIndependent(ShapeDtwParameters::default()),
+            DistanceConfig::ShapeHogDtw(ShapeDtwParameters::default()),
+        ] {
+            assert_eq!(
+                multivariate_distance(config.clone(), &complete, &[0, 2]),
+                multivariate_distance(config, &complete_mutated, &[0, 2]),
+            );
+        }
+
+        let missing = [1.0, f64::NAN, 3.0, 10.0, 19.0, 31.0, 100.0, 200.0, 300.0];
+        let missing_mutated = [
+            1.0,
+            f64::NAN,
+            3.0,
+            f64::NAN,
+            f64::NAN,
+            f64::NAN,
+            100.0,
+            200.0,
+            300.0,
+        ];
+        for config in [
+            DistanceConfig::NaNSquaredEuclideanIndependent {
+                no_overlap: NoOverlapPolicy::Infinite,
+            },
+            DistanceConfig::DtwArowIndependent(DtwArowParameters::default()),
+            DistanceConfig::DtwArowDependent(DtwArowParameters::default()),
+        ] {
+            assert_eq!(
+                multivariate_distance(config.clone(), &missing, &[0, 2]),
+                multivariate_distance(config, &missing_mutated, &[0, 2]),
+            );
+        }
+    }
+
+    #[test]
+    fn selected_dimension_validation_rejects_empty_and_out_of_range_subsets() {
+        let evaluator =
+            DistanceEvaluator::new(DistanceConfig::DtwDependent(DtwParameters::default()));
+        let values =
+            MultivariateSeriesView::contiguous_f64(&[1.0, 2.0, 10.0, 20.0], 2, 2).expect("series");
+        for selected in [&[][..], &[2][..]] {
+            assert!(
+                evaluator
+                    .evaluate_multivariate(
+                        values,
+                        values,
+                        Some(selected),
+                        DistanceCutoff::None,
+                        &mut DistanceScratch::new(),
+                    )
+                    .is_err()
+            );
+        }
+    }
+}

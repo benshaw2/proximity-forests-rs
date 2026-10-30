@@ -23,6 +23,10 @@ mod isolation_predict;
 mod leaf_payload;
 mod model;
 mod node_membership;
+mod observation_sampling;
+mod oob;
+mod oob_parallel;
+mod oob_results;
 mod parallel;
 mod partition;
 mod predict;
@@ -48,7 +52,7 @@ pub use batch_predict::{
     predict_vector_classification_many, predict_vector_regression_many,
     score_multivariate_isolation_many, score_vector_isolation_many,
 };
-pub use bootstrap::BootstrapSample;
+pub use bootstrap::TreeSample;
 pub use builder::build_tree_iterative;
 pub use candidate::{CandidateScore, CandidateSplit, ScorePreference, ScoredCandidate};
 pub use candidate_generator::{CandidateIdentity, generate_candidate};
@@ -95,6 +99,15 @@ pub use model::{
     IsolationForest, RegressionForest, RetainedTrainingData, TrainingMetadata,
 };
 pub use node_membership::{NodeMembership, SampleId};
+pub use observation_sampling::{ObservationSampling, SampleSize};
+pub use oob::OobMembership;
+pub use oob_parallel::{oob_execution_context, parallel_oob_rows_in};
+pub use oob_results::{
+    OobClassificationResult, OobRegressionResult, oob_multivariate_classification,
+    oob_multivariate_classification_in, oob_multivariate_regression,
+    oob_multivariate_regression_in, oob_vector_classification, oob_vector_classification_in,
+    oob_vector_regression, oob_vector_regression_in,
+};
 pub use parallel::{
     ExecutionContext, ParallelPolicy, Shared, WorkerBudget, parallel_indexed, parallel_indexed_in,
     parallel_indexed_init_in,

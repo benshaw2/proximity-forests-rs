@@ -24,7 +24,7 @@ def test_fixed_parameter_distance_specs_fit():
             DistanceSpec("dtw", window=1),
             {"name": "erp", "window": 1, "gap": 0.0},
         ],
-        bootstrap=False,
+        sampling="full",
         random_state=7,
     ).fit(X, y)
     assert model.predict(X).shape == (X.shape[0],)
@@ -58,7 +58,7 @@ def test_unknown_distance_parameter_is_rejected():
     with pytest.raises(ValueError, match="not valid"):
         ProximityForestClassifier(
             distances=["dtw?gap=1.0"],
-            bootstrap=False,
+            sampling="full",
         ).fit(X, y)
 
 
@@ -67,7 +67,7 @@ def test_multivariate_suffix_is_rejected_by_current_vector_binding():
     with pytest.raises(ValueError, match="multivariate input"):
         ProximityForestClassifier(
             distances=["dtw_i"],
-            bootstrap=False,
+            sampling="full",
         ).fit(X, y)
 
 

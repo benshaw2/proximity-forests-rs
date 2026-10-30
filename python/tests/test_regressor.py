@@ -20,7 +20,7 @@ def test_regressor_fit_predict_and_apply():
         n_candidates=3,
         n_exemplars=2,
         max_depth=5,
-        bootstrap=False,
+        sampling="full",
         random_state=11,
         n_jobs=1,
     ).fit(X, y)
@@ -43,7 +43,7 @@ def test_regressor_supports_multi_target_predictions():
         n_candidates=3,
         n_exemplars=2,
         max_depth=5,
-        bootstrap=False,
+        sampling="full",
         random_state=13,
         n_jobs=1,
     ).fit(X, targets)
@@ -61,7 +61,7 @@ def test_single_column_2d_target_preserves_2d_prediction_shape():
     model = ProximityForestRegressor(
         n_estimators=3,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=17,
         n_jobs=1,
     ).fit(X, target_matrix)
@@ -76,14 +76,14 @@ def test_regressor_is_deterministic_across_tree_thread_counts():
     first = ProximityForestRegressor(
         n_estimators=7,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=23,
         n_jobs=1,
     ).fit(X, targets)
     second = ProximityForestRegressor(
         n_estimators=7,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=23,
         n_jobs=2,
     ).fit(X, targets)
@@ -117,7 +117,7 @@ def test_regressor_supports_native_float_dtypes(dtype):
     X, y = toy_data()
     X = np.ascontiguousarray(X, dtype=dtype)
     model = ProximityForestRegressor(
-        n_estimators=5, n_exemplars=2, bootstrap=False, random_state=43
+        n_estimators=5, n_exemplars=2, sampling="full", random_state=43
     ).fit(X, y)
     assert model.predict(X).shape == (X.shape[0],)
     assert model.apply(X).dtype == np.uint32

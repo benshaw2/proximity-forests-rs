@@ -17,7 +17,7 @@ def test_isolation_api_shapes_and_score_identity():
         n_estimators=11,
         n_candidates=4,
         n_exemplars=2,
-        bootstrap=False,
+        sampling="full",
         random_state=17,
         n_jobs=1,
     ).fit(X)
@@ -40,7 +40,7 @@ def test_numeric_contamination_sets_requested_boundary_fraction():
     model = ProximityIsolationForest(
         n_estimators=13,
         contamination=0.125,
-        bootstrap=False,
+        sampling="full",
         random_state=21,
     ).fit(X)
     observed = np.mean(model.predict(X) == -1)
@@ -62,8 +62,39 @@ def test_invalid_contamination_is_rejected():
 def test_isolation_supports_native_float_dtypes(dtype):
     X = np.ascontiguousarray(toy_data(), dtype=dtype)
     model = ProximityIsolationForest(
-        n_estimators=5, bootstrap=False, random_state=47
+        n_estimators=5, sampling="full", random_state=47
     ).fit(X)
     assert model.anomaly_score(X).shape == (X.shape[0],)
     assert model.apply(X).dtype == np.uint32
+
+def test_default_isolation_sampling_is_fixed_256_subsample():
+    rng = np.random.default_rng(31)
+    X = rng.normal(size=(300, 3))
+    model = ProximityIsolationForest(n_estimators=3, random_state=4).fit(X)
+    assert model.sampling == "subsample"
+    assert model.sample_size == 256
+    assert model.max_samples_ == 256
+
+
+def test_default_isolation_sample_size_clamps_to_small_dataset():
+    X = toy_data()
+    model = ProximityIsolationForest(n_estimators=3, random_state=5).fit(X)
+    assert model.max_samples_ == X.shape[0]
+
+
+def test_proportional_isolation_sample_size_uses_ceiling():
+    rng = np.random.default_rng(32)
+    X = rng.normal(size=(21, 3))
+    model = ProximityIsolationForest(
+        n_estimators=3, sampling="subsample", sample_size=0.25, random_state=6
+    ).fit(X)
+    assert model.max_samples_ == 6
+
+
+def test_explicit_full_isolation_retains_full_normalization_size():
+    X = toy_data()
+    model = ProximityIsolationForest(
+        n_estimators=3, sampling="full", sample_size=None, random_state=7
+    ).fit(X)
+    assert model.max_samples_ == X.shape[0]
 

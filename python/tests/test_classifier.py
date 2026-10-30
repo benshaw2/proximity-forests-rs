@@ -19,7 +19,7 @@ def test_classifier_fit_predict_proba_and_apply():
         n_estimators=5,
         n_candidates=3,
         max_depth=4,
-        bootstrap=False,
+        sampling="full",
         random_state=7,
         n_jobs=1,
     ).fit(X, y)
@@ -50,7 +50,7 @@ def test_classifier_supports_multiclass_multioutput():
     model = ProximityForestClassifier(
         n_estimators=7,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=17,
         n_jobs=1,
     ).fit(X, y)
@@ -82,7 +82,7 @@ def test_classifier_supports_multilabel_indicator_targets():
     model = ProximityForestClassifier(
         n_estimators=7,
         n_candidates=4,
-        bootstrap=False,
+        sampling="full",
         random_state=29,
         n_jobs=1,
     ).fit(X, y)
@@ -104,13 +104,13 @@ def test_classifier_is_deterministic_across_tree_thread_counts():
     targets = np.column_stack((y, np.array([0, 1, 0, 1])))
     first = ProximityForestClassifier(
         n_estimators=7,
-        bootstrap=False,
+        sampling="full",
         random_state=19,
         n_jobs=1,
     ).fit(X, targets)
     second = ProximityForestClassifier(
         n_estimators=7,
-        bootstrap=False,
+        sampling="full",
         random_state=19,
         n_jobs=2,
     ).fit(X, targets)
@@ -143,7 +143,7 @@ def test_classifier_supports_native_float_dtypes(dtype):
     X, y = toy_data()
     X = np.ascontiguousarray(X, dtype=dtype)
     model = ProximityForestClassifier(
-        n_estimators=5, bootstrap=False, random_state=41
+        n_estimators=5, sampling="full", random_state=41
     ).fit(X, y)
     assert model.predict(X).shape == (X.shape[0],)
     assert model.predict_proba(X).shape == (X.shape[0], 2)

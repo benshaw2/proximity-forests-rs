@@ -22,7 +22,7 @@ def test_one_channel_3d_is_aeon_style_univariate(dtype):
     X2, X3 = _data(dtype)
     y = np.asarray([0, 0, 1, 1])
     model = ProximityForestClassifier(
-        n_estimators=5, bootstrap=False, random_state=7, distances="pf"
+        n_estimators=5, sampling="full", random_state=7, distances="pf"
     ).fit(X3, y)
     assert model.input_layout_ == "vector"
     assert model.n_features_in_ == X3.shape[2]
@@ -39,13 +39,13 @@ def test_single_case_inference_for_all_estimators(dtype):
     yr = np.asarray([0.0, 0.2, 4.0, 4.2])
 
     clf = ProximityForestClassifier(
-        n_estimators=3, bootstrap=False, random_state=3
+        n_estimators=3, sampling="full", random_state=3
     ).fit(X3, yc)
     reg = ProximityForestRegressor(
-        n_estimators=3, n_exemplars=2, bootstrap=False, random_state=3
+        n_estimators=3, n_exemplars=2, sampling="full", random_state=3
     ).fit(X3, yr)
     iso = ProximityIsolationForest(
-        n_estimators=3, n_exemplars=2, bootstrap=False, random_state=3
+        n_estimators=3, n_exemplars=2, sampling="full", random_state=3
     ).fit(X3)
 
     assert clf.predict(X2[:1]).shape == (1,)
@@ -56,9 +56,9 @@ def test_single_case_inference_for_all_estimators(dtype):
 def test_fit_still_requires_two_cases():
     X = np.asarray([[[0.0, 1.0, 2.0]]], dtype=np.float64)
     with pytest.raises(ValueError, match="at least 2 cases"):
-        ProximityForestRegressor(bootstrap=False).fit(X, np.asarray([0.0]))
+        ProximityForestRegressor(sampling="full").fit(X, np.asarray([0.0]))
     with pytest.raises(ValueError, match="at least 2 cases"):
-        ProximityIsolationForest(bootstrap=False).fit(X)
+        ProximityIsolationForest(sampling="full").fit(X)
 
 
 def test_single_unequal_case_is_valid_for_inference_only():
@@ -70,7 +70,7 @@ def test_single_unequal_case_is_valid_for_inference_only():
     ]
     y = np.asarray([0, 0, 1, 1])
     model = ProximityForestClassifier(
-        n_estimators=3, bootstrap=False, random_state=5, distances=["dtw_i"]
+        n_estimators=3, sampling="full", random_state=5, distances=["dtw_i"]
     ).fit(X, y)
     assert model.predict([X[0]]).shape == (1,)
     assert model.apply([X[0]]).shape == (1, 3)

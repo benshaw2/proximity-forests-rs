@@ -3,12 +3,13 @@
 use std::num::NonZeroUsize;
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
-use proximity_forests_core::{RegressionTargets, SupervisedCriterion};
+use proximity_forests_core::{OobRegressionResult, RegressionTargets, SupervisedCriterion};
 
 use proximity_forests_core::forest::{
-    DimensionSelection, ForestConfig, RegressionForest, apply_multivariate_many, apply_vector_many,
+    ForestConfig, RegressionForest, apply_multivariate_many, apply_vector_many,
     fit_multivariate_regression_forest, fit_vector_regression_forest,
-    predict_multivariate_regression_many, predict_vector_regression_many,
+    oob_multivariate_regression_in, oob_vector_regression_in, predict_multivariate_regression_many,
+    predict_vector_regression_many,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -19,7 +20,10 @@ use crate::{
         parse_multivariate_catalog, parse_vector_catalog, validate_missing_compatibility,
     },
     error::core_error,
-    input::{MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention},
+    input::{
+        MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention,
+        parse_dimension_selection, parse_observation_sampling,
+    },
 };
 
 /// Rust-backed regressor used by the public Python estimator wrapper.
@@ -30,7 +34,9 @@ pub struct NativeProximityForestRegressor {
     n_exemplars: usize,
     max_depth: Option<usize>,
     min_samples_split: usize,
-    bootstrap: bool,
+    max_features: String,
+    sampling: String,
+    sample_size: String,
     random_state: u64,
     n_jobs: usize,
     data_retention: String,
@@ -89,7 +95,7 @@ impl NativeProximityForestRegressor {
 
     #[new]
     #[pyo3(signature = (n_estimators=100, n_candidates=5, n_exemplars=2,
-        max_depth=None, min_samples_split=2, bootstrap=true,
+        max_depth=None, min_samples_split=2, max_features=String::from("all"), sampling=String::from("bootstrap"), sample_size=String::from("all"),
         random_state=0, n_jobs=1, data_retention=String::from("exemplars"), distances=vec![String::from("squared_euclidean")]))]
     fn new(
         n_estimators: usize,
@@ -97,7 +103,9 @@ impl NativeProximityForestRegressor {
         n_exemplars: usize,
         max_depth: Option<usize>,
         min_samples_split: usize,
-        bootstrap: bool,
+        max_features: String,
+        sampling: String,
+        sample_size: String,
         random_state: u64,
         n_jobs: usize,
         data_retention: String,
@@ -114,7 +122,9 @@ impl NativeProximityForestRegressor {
             n_exemplars,
             max_depth,
             min_samples_split,
-            bootstrap,
+            max_features,
+            sampling,
+            sample_size,
             random_state,
             n_jobs,
             data_retention,
@@ -163,11 +173,12 @@ impl NativeProximityForestRegressor {
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),
             self.random_state,
         );
-        config.bootstrap = self.bootstrap;
+        config.observation_sampling =
+            parse_observation_sampling(&self.sampling, &self.sample_size)?;
         config.maximum_depth = self.max_depth;
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
-        config.dimension_selection = DimensionSelection::All;
+        config.dimension_selection = parse_dimension_selection(&self.max_features)?;
         configure_data_retention(&mut config, &self.data_retention)?;
         let feature_count = input.columns();
         let model = input.with_vector_views(|views| {
@@ -210,10 +221,11 @@ impl NativeProximityForestRegressor {
             NonZeroUsize::new(self.n_candidates).unwrap(),
             self.random_state,
         );
-        config.bootstrap = self.bootstrap;
+        config.observation_sampling =
+            parse_observation_sampling(&self.sampling, &self.sample_size)?;
         config.maximum_depth = self.max_depth;
         config.minimum_split_size = NonZeroUsize::new(self.min_samples_split).unwrap();
-        config.dimension_selection = DimensionSelection::All;
+        config.dimension_selection = parse_dimension_selection(&self.max_features)?;
         configure_data_retention(&mut config, &self.data_retention)?;
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_regression_forest(
@@ -315,11 +327,12 @@ impl NativeProximityForestRegressor {
             NonZeroUsize::new(self.n_candidates).expect("validated positive"),
             self.random_state,
         );
-        config.bootstrap = self.bootstrap;
+        config.observation_sampling =
+            parse_observation_sampling(&self.sampling, &self.sample_size)?;
         config.maximum_depth = self.max_depth;
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
-        config.dimension_selection = DimensionSelection::All;
+        config.dimension_selection = parse_dimension_selection(&self.max_features)?;
         configure_data_retention(&mut config, &self.data_retention)?;
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_regression_forest(
@@ -338,6 +351,60 @@ impl NativeProximityForestRegressor {
         self.n_channels_in = Some(input.channels());
         self.n_timepoints_in = None;
         Ok(())
+    }
+
+    fn oob(
+        &self,
+        x: &Bound<'_, PyAny>,
+        y: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<(Vec<f64>, Vec<usize>, f64, usize)> {
+        let input = MatrixInput::extract(x)?;
+        let shape = y.shape();
+        let targets =
+            RegressionTargets::from_f64(y.as_array().iter().copied().collect(), shape[0], shape[1])
+                .map_err(core_error)?;
+        let model = self.model.as_ref().ok_or_else(not_fitted)?;
+        let result = input.with_vector_views(|views| {
+            oob_vector_regression_in(model, views, &targets, self.random_state, self.n_jobs)
+                .map_err(core_error)
+        })?;
+        Ok(regression_oob_payload(&result))
+    }
+
+    fn oob_multivariate(
+        &self,
+        x: &Bound<'_, PyAny>,
+        y: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<(Vec<f64>, Vec<usize>, f64, usize)> {
+        let input = SeriesArrayInput::extract(x)?;
+        let shape = y.shape();
+        let targets =
+            RegressionTargets::from_f64(y.as_array().iter().copied().collect(), shape[0], shape[1])
+                .map_err(core_error)?;
+        let model = self.model.as_ref().ok_or_else(not_fitted)?;
+        let result = input.with_series_views(|views| {
+            oob_multivariate_regression_in(model, views, &targets, self.random_state, self.n_jobs)
+                .map_err(core_error)
+        })?;
+        Ok(regression_oob_payload(&result))
+    }
+
+    fn oob_unequal(
+        &self,
+        x: &Bound<'_, PyAny>,
+        y: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<(Vec<f64>, Vec<usize>, f64, usize)> {
+        let input = UnequalSeriesInput::extract(x)?;
+        let shape = y.shape();
+        let targets =
+            RegressionTargets::from_f64(y.as_array().iter().copied().collect(), shape[0], shape[1])
+                .map_err(core_error)?;
+        let model = self.model.as_ref().ok_or_else(not_fitted)?;
+        let result = input.with_series_views(|views| {
+            oob_multivariate_regression_in(model, views, &targets, self.random_state, self.n_jobs)
+                .map_err(core_error)
+        })?;
+        Ok(regression_oob_payload(&result))
     }
 
     fn predict_unequal_matrix<'py>(
@@ -536,6 +603,15 @@ impl NativeProximityForestRegressor {
         }
         Ok(())
     }
+}
+
+fn regression_oob_payload(result: &OobRegressionResult) -> (Vec<f64>, Vec<usize>, f64, usize) {
+    (
+        result.predictions().to_vec(),
+        result.vote_counts().to_vec(),
+        result.score(),
+        result.output_count(),
+    )
 }
 
 fn not_fitted() -> PyErr {

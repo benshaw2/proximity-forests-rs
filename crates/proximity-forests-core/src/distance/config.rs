@@ -1,6 +1,6 @@
 //! Typed configuration for the native distance catalog.
 
-use super::{DistanceCapabilities, DistanceKind, NoOverlapPolicy};
+use super::{DimensionSelectionSupport, DistanceCapabilities, DistanceKind, NoOverlapPolicy};
 
 /// Finite floating-point parameter stored by IEEE-754 bits.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -240,6 +240,56 @@ impl DistanceConfig {
     }
 }
 
+const fn dimension_selection_support(kind: DistanceKind) -> DimensionSelectionSupport {
+    use DimensionSelectionSupport as S;
+    use DistanceKind as K;
+    match kind {
+        // Vector-layout kernels where positions can represent tabular features.
+        K::SquaredEuclidean | K::Manhattan | K::Cosine | K::NaNSquaredEuclidean => {
+            S::VectorFeatures
+        }
+
+        // Every independent or dependent multivariate implementation selects
+        // channels while preserving each selected channel's temporal axis.
+        K::SquaredEuclideanIndependent
+        | K::ManhattanIndependent
+        | K::CidIndependent
+        | K::SbdIndependent
+        | K::DtwIndependent
+        | K::DdtwIndependent
+        | K::WdtwIndependent
+        | K::WddtwIndependent
+        | K::ErpIndependent
+        | K::LcssIndependent
+        | K::MsmIndependent
+        | K::TweIndependent
+        | K::ShapeHog1dDtwIndependent
+        | K::DtwDependent
+        | K::DdtwDependent
+        | K::WdtwDependent
+        | K::WddtwDependent
+        | K::ShapeHogDtw
+        | K::NaNSquaredEuclideanIndependent
+        | K::DtwArowIndependent
+        | K::DtwArowDependent => S::MultivariateChannels,
+
+        // Vector positions are ordered time points for these temporal/shape
+        // distances and must not be sampled as independent features.
+        K::Cid
+        | K::Sbd
+        | K::Dtw
+        | K::Ddtw
+        | K::Wdtw
+        | K::Wddtw
+        | K::Erp
+        | K::Lcss
+        | K::Msm
+        | K::Twe
+        | K::ShapeHog1dDtw
+        | K::DtwArow => S::None,
+    }
+}
+
 const fn capabilities_for(kind: DistanceKind) -> DistanceCapabilities {
     use DistanceKind as K;
     let missing = matches!(
@@ -284,11 +334,112 @@ const fn capabilities_for(kind: DistanceKind) -> DistanceCapabilities {
         K::Cosine | K::Sbd | K::SbdIndependent | K::Lcss | K::LcssIndependent
     );
     DistanceCapabilities {
-        selected_dimensions: true,
+        dimension_selection: dimension_selection_support(kind),
         unequal_lengths: unequal,
         early_abandoning: early,
         missing_values: missing,
         time_coordinates: false,
         batch_evaluation: false,
+    }
+}
+
+#[cfg(test)]
+mod dimension_selection_capability_tests {
+    use super::{DistanceConfig, DistanceKind, dimension_selection_support};
+    use crate::DimensionSelectionSupport;
+
+    #[test]
+    fn vector_tabular_families_support_feature_subsets() {
+        use DistanceKind as K;
+        for kind in [
+            K::SquaredEuclidean,
+            K::Manhattan,
+            K::Cosine,
+            K::NaNSquaredEuclidean,
+        ] {
+            assert_eq!(
+                dimension_selection_support(kind),
+                DimensionSelectionSupport::VectorFeatures
+            );
+        }
+    }
+
+    #[test]
+    fn vector_temporal_families_reject_feature_subsets() {
+        use DistanceKind as K;
+        for kind in [
+            K::Cid,
+            K::Sbd,
+            K::Dtw,
+            K::Ddtw,
+            K::Wdtw,
+            K::Wddtw,
+            K::Erp,
+            K::Lcss,
+            K::Msm,
+            K::Twe,
+            K::ShapeHog1dDtw,
+            K::DtwArow,
+        ] {
+            assert_eq!(
+                dimension_selection_support(kind),
+                DimensionSelectionSupport::None
+            );
+        }
+    }
+
+    #[test]
+    fn all_multivariate_families_support_channel_subsets() {
+        use DistanceKind as K;
+        for kind in [
+            K::SquaredEuclideanIndependent,
+            K::ManhattanIndependent,
+            K::CidIndependent,
+            K::SbdIndependent,
+            K::DtwIndependent,
+            K::DdtwIndependent,
+            K::WdtwIndependent,
+            K::WddtwIndependent,
+            K::ErpIndependent,
+            K::LcssIndependent,
+            K::MsmIndependent,
+            K::TweIndependent,
+            K::ShapeHog1dDtwIndependent,
+            K::DtwDependent,
+            K::DdtwDependent,
+            K::WdtwDependent,
+            K::WddtwDependent,
+            K::ShapeHogDtw,
+            K::NaNSquaredEuclideanIndependent,
+            K::DtwArowIndependent,
+            K::DtwArowDependent,
+        ] {
+            assert_eq!(
+                dimension_selection_support(kind),
+                DimensionSelectionSupport::MultivariateChannels
+            );
+        }
+    }
+
+    #[test]
+    fn concrete_config_capability_uses_kind_semantics() {
+        assert!(
+            DistanceConfig::SquaredEuclidean
+                .capabilities()
+                .dimension_selection
+                .supports_vector_features()
+        );
+        assert!(
+            !DistanceConfig::Dtw(Default::default())
+                .capabilities()
+                .dimension_selection
+                .supports_vector_features()
+        );
+        assert!(
+            DistanceConfig::DtwDependent(Default::default())
+                .capabilities()
+                .dimension_selection
+                .supports_multivariate_channels()
+        );
     }
 }

@@ -20,7 +20,7 @@ def data():
 def test_classifier_pickle_round_trip(retention):
     X, y, _ = data()
     model = ProximityForestClassifier(
-        n_estimators=7, bootstrap=False, random_state=5, data_retention=retention
+        n_estimators=7, sampling="full", random_state=5, data_retention=retention
     ).fit(X, y)
     restored = pickle.loads(pickle.dumps(model, protocol=pickle.HIGHEST_PROTOCOL))
     np.testing.assert_array_equal(restored.predict(X), model.predict(X))
@@ -33,7 +33,7 @@ def test_classifier_pickle_round_trip(retention):
 def test_regressor_pickle_round_trip(retention):
     X, _, y = data()
     model = ProximityForestRegressor(
-        n_estimators=7, bootstrap=False, random_state=5, data_retention=retention
+        n_estimators=7, sampling="full", random_state=5, data_retention=retention
     ).fit(X, y)
     restored = pickle.loads(pickle.dumps(model, protocol=pickle.HIGHEST_PROTOCOL))
     np.testing.assert_allclose(restored.predict(X), model.predict(X), rtol=0, atol=0)

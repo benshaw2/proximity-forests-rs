@@ -17,7 +17,7 @@ def test_missing_distance_runs_on_complete_data(dtype):
     X, y = vector_data(dtype)
     model = ProximityForestClassifier(
         n_estimators=3,
-        bootstrap=False,
+        sampling="full",
         random_state=7,
         distances=["nan_squared_euclidean"],
     ).fit(X, y)
@@ -28,7 +28,7 @@ def test_complete_data_allows_mixed_regular_and_missing_catalog():
     X, y = vector_data()
     model = ProximityForestClassifier(
         n_estimators=3,
-        bootstrap=False,
+        sampling="full",
         random_state=7,
         distances=["squared_euclidean", "nan_squared_euclidean"],
     ).fit(X, y)
@@ -41,7 +41,7 @@ def test_nan_data_requires_every_distance_to_support_missing_values():
     with pytest.raises(ValueError, match="every configured distance"):
         ProximityForestClassifier(
             distances=["nan_squared_euclidean", "squared_euclidean"],
-            bootstrap=False,
+            sampling="full",
         ).fit(X, y)
 
 
@@ -50,7 +50,7 @@ def test_nan_aware_sampling_and_fixed_missing_distance_fit():
     X[0, 1] = np.nan
     model = ProximityForestClassifier(
         n_estimators=3,
-        bootstrap=False,
+        sampling="full",
         random_state=9,
         distances=[DistanceSpec("nan_squared_euclidean", no_overlap="infinite")],
     ).fit(X, y)

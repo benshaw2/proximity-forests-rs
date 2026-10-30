@@ -7,6 +7,8 @@ import numpy as np
 
 from ._core import _NativeProximityIsolationForest
 from ._distances import normalize_distances
+from ._sampling import normalize_sampling
+from ._max_features import normalize_max_features
 
 
 class ProximityIsolationForest:
@@ -26,9 +28,11 @@ class ProximityIsolationForest:
         n_exemplars: int = 2,
         max_depth: int | None = None,
         min_samples_split: int = 2,
+        max_features=None,
         contamination: str | float = "auto",
         distances="default",
-        bootstrap: bool = False,
+        sampling: str = "subsample",
+        sample_size=256,
         random_state: int | None = None,
         n_jobs: int | None = 1,
         data_retention: str = "exemplars",
@@ -38,12 +42,25 @@ class ProximityIsolationForest:
         self.n_exemplars = n_exemplars
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
+        self.max_features = max_features
         self.contamination = contamination
         self.distances = distances
-        self.bootstrap = bootstrap
+        self.sampling = sampling
+        self.sample_size = sample_size
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.data_retention = data_retention
+
+    def _resolved_sample_size(self, n_cases: int) -> int:
+        if self.sampling == "full":
+            return n_cases
+        if self.sample_size is None:
+            return n_cases
+        if isinstance(self.sample_size, (int, np.integer)) and not isinstance(self.sample_size, bool):
+            requested = int(self.sample_size)
+        else:
+            requested = max(1, int(np.ceil(float(self.sample_size) * n_cases)))
+        return min(requested, n_cases) if self.sampling == "subsample" else requested
 
     def fit(self, X, y=None):
         del y
@@ -52,9 +69,10 @@ class ProximityIsolationForest:
         n_cases = len(X) if layout == "unequal_multivariate" else X.shape[0]
         distance_layout = "multivariate" if layout == "unequal_multivariate" else layout
         distances = list(normalize_distances(self.distances, layout=distance_layout))
+        sampling, sample_size = normalize_sampling(self.sampling, self.sample_size, default_sampling="subsample")
         self._native = _NativeProximityIsolationForest(
             n_estimators=int(self.n_estimators), n_candidates=int(self.n_candidates), n_exemplars=int(self.n_exemplars),
-            max_depth=self.max_depth, min_samples_split=int(self.min_samples_split), bootstrap=bool(self.bootstrap),
+            max_depth=self.max_depth, min_samples_split=int(self.min_samples_split), max_features=normalize_max_features(self.max_features), sampling=sampling, sample_size=sample_size,
             random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs), data_retention=str(self.data_retention), distances=distances,
         )
@@ -71,7 +89,7 @@ class ProximityIsolationForest:
             scores = np.asarray(self._native.anomaly_score(X))
         self.input_layout_ = layout
         self.n_features_in_ = X[0].shape[0] if layout == "unequal_multivariate" else X.shape[1]
-        self.max_samples_ = n_cases
+        self.max_samples_ = self._resolved_sample_size(n_cases)
         self.data_retention_ = str(self.data_retention)
         self.offset_ = -0.5 if self.contamination == "auto" else -float(np.quantile(scores, 1.0 - float(self.contamination)))
         return self
@@ -118,13 +136,14 @@ class ProximityIsolationForest:
         if payload is None:
             self._native = None
             return
+        sampling, sample_size = normalize_sampling(self.sampling, self.sample_size, default_sampling="subsample")
         self._native = _NativeProximityIsolationForest(
             n_estimators=int(self.n_estimators),
             n_candidates=int(self.n_candidates),
             n_exemplars=int(self.n_exemplars),
             max_depth=self.max_depth,
             min_samples_split=int(self.min_samples_split),
-            bootstrap=bool(self.bootstrap),
+            max_features=normalize_max_features(self.max_features), sampling=sampling, sample_size=sample_size,
             random_state=0 if self.random_state is None else int(self.random_state),
             n_jobs=0 if self.n_jobs in (None, -1) else int(self.n_jobs),
             data_retention=str(self.data_retention),
@@ -170,9 +189,11 @@ class ProximityIsolationForest:
             "n_exemplars": self.n_exemplars,
             "max_depth": self.max_depth,
             "min_samples_split": self.min_samples_split,
+            "max_features": self.max_features,
             "contamination": self.contamination,
             "distances": self.distances,
-            "bootstrap": self.bootstrap,
+            "sampling": self.sampling,
+            "sample_size": self.sample_size,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,
             "data_retention": self.data_retention,

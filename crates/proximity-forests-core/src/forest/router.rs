@@ -198,6 +198,32 @@ mod tests {
         assert_eq!(result.distance(), 4.0);
     }
     #[test]
+    fn selected_vector_route_ignores_unselected_positions() {
+        let values = [[0.0_f64, 1_000.0], [10.0, -1_000.0], [1.0, 99_999.0]];
+        let observations: Vec<_> = values
+            .iter()
+            .map(|values| NumericVectorView::from_f64(values))
+            .collect();
+        let candidate = CandidateSplit::new(
+            DistanceConfig::SquaredEuclidean,
+            vec![0],
+            vec![ObservationIndex::new(0), ObservationIndex::new(1)],
+        )
+        .expect("candidate");
+        let result = route_vector(
+            observations[2],
+            &observations,
+            &candidate,
+            TiePolicy::First,
+            None,
+            &mut DistanceScratch::new(),
+        )
+        .expect("selected route");
+        assert_eq!(result.branch(), 0);
+        assert_eq!(result.distance(), 1.0);
+    }
+
+    #[test]
     fn all_unavailable_routes_follow_the_tie_policy() {
         use crate::NoOverlapPolicy;
         let values = [[f64::NAN], [f64::NAN]];

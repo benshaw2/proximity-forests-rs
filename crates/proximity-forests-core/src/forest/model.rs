@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{ForestConfig, ScalarKind, TiePolicy};
 
-use super::{BootstrapSample, OwnedObservationStore, ProximityTree};
+use super::{OobMembership, OwnedObservationStore, ProximityTree, TreeSample};
 
 /// Policy controlling complete training-data retention.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -131,7 +131,7 @@ pub enum RetainedTrainingData {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrainingMetadata {
     sample_count: usize,
-    bootstrap: Vec<BootstrapSample>,
+    bootstrap: Vec<TreeSample>,
 }
 
 impl RetainedTrainingData {
@@ -163,7 +163,7 @@ impl RetainedTrainingData {
 impl TrainingMetadata {
     /// Creates compact per-tree fitting metadata.
     #[must_use]
-    pub const fn new(sample_count: usize, bootstrap: Vec<BootstrapSample>) -> Self {
+    pub const fn new(sample_count: usize, bootstrap: Vec<TreeSample>) -> Self {
         Self {
             sample_count,
             bootstrap,
@@ -178,8 +178,16 @@ impl TrainingMetadata {
 
     /// Returns bootstrap and OOB metadata in tree order.
     #[must_use]
-    pub fn bootstrap(&self) -> &[BootstrapSample] {
+    pub fn bootstrap(&self) -> &[TreeSample] {
         &self.bootstrap
+    }
+
+    /// Derives compact sample-to-tree OOB membership from persisted tree samples.
+    ///
+    /// The derived index is intentionally not serialized; callers that compute
+    /// OOB results build it once per operation and reuse its contiguous rows.
+    pub fn oob_membership(&self) -> crate::CoreResult<OobMembership> {
+        OobMembership::from_tree_samples(self.sample_count, &self.bootstrap)
     }
 }
 
