@@ -89,8 +89,15 @@ class ProximityForestRegressor:
             self.oob_prediction_ = matrix[:, 0] if self._target_was_1d else matrix
             self.oob_vote_counts_ = np.asarray(votes, dtype=np.int64)
             self.oob_score_ = float(score)
-            if np.any(self.oob_vote_counts_ == 0):
-                warnings.warn("Some training samples have no OOB votes; their OOB results are NaN.", RuntimeWarning, stacklevel=2)
+            zero_votes = int(np.count_nonzero(self.oob_vote_counts_ == 0))
+            if zero_votes:
+                warnings.warn(
+                    f"{zero_votes} of {len(self.oob_vote_counts_)} training samples received no "
+                    "OOB votes; their OOB results are NaN. Increase n_estimators for more "
+                    "complete OOB coverage.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         return self
 
     def predict(self, X):

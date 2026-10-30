@@ -1,11 +1,10 @@
 # proximity-forests
 
-`proximity-forests` is an alpha-stage Python package backed by a Rust core for
+`proximity-forests` is a beta-stage Python package backed by a Rust core for
 proximity-forest classification, regression, and isolation models.
 
-> **Alpha status:** The estimator, proximity, and future imputation APIs may
-> change before a stable release. Serialized models should be loaded with a
-> compatible package version.
+> **Beta status:** Public APIs may still change before a stable release.
+> Serialized models should be loaded with a compatible package version.
 
 ## Current scope
 
@@ -24,25 +23,29 @@ proximity-forest classification, regression, and isolation models.
 - versioned fitted-model serialization through Python `pickle`
 - exemplar-only and embedded-copy training-data retention modes
 
-## Installation from a local wheel
+## Installation
 
-Building a wheel requires a Rust toolchain and Maturin. Installing the resulting
-wheel does not require Rust.
+Install the published package from PyPI:
 
 ```bash
-python -m pip install "maturin>=1.9,<2.0"
-maturin build --release --out dist
-python -m pip install dist/proximity_forests-0.1.0a1-*.whl
+python -m pip install proximity-forests
 ```
 
-For editable development:
+Pre-release versions may require:
+
+```bash
+python -m pip install --pre proximity-forests
+```
+
+For editable source development, a Rust toolchain and Maturin are required:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install -U pip maturin
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 maturin develop --release
-python -m pytest python/tests
+python -m pytest
 ```
 
 ## Minimal example
@@ -65,6 +68,34 @@ model = ProximityForestClassifier(
 predictions = model.predict(X)
 ```
 
+## Parallel execution
+
+All three estimators accept `n_jobs`. The public worker contract is:
+
+- `n_jobs=1`, the default, requests sequential native execution.
+- `n_jobs=None` and `n_jobs=-1` request automatic selection from the logical CPUs
+  visible to the process.
+- a positive integer requests that many native workers. Values larger than the
+  available CPU count are accepted but usually provide no benefit.
+
+The Rust core creates one bounded, operation-scoped worker pool. Fitting may use
+parallelism across trees and, for sufficiently expensive nodes, across split
+candidates. Prediction, probability estimation, isolation scoring, and `apply`
+may tile work across both queries and fitted trees. Small inference matrices stay
+sequential to avoid pool and scheduling overhead. These thresholds are internal
+calibration details and are not part of the stable public API.
+
+Scheduling does not define model semantics. Stable seeds, indexed collection, and
+ascending tree-order reduction preserve fitted structures and outputs across
+worker counts for the same inputs and configuration. Floating-point predictions
+are reduced in original tree order. Errors from indexed native work are reported
+in stable index order.
+
+`n_jobs` is an estimator parameter, not fitted-model state. Pickle payloads contain
+the fitted forest and Python estimator parameters, but no worker pool or other
+runtime executor state. See [`docs/concurrency.md`](docs/concurrency.md) for the
+implementation contract, calibration scope, and deferred work.
+
 ## Missing values
 
 NaN is accepted only when every possible distance in the configured catalog
@@ -83,12 +114,12 @@ model = ProximityForestClassifier(
 
 For multivariate series, use `dtw_arow_i` or `dtw_arow_d`.
 
-## Known alpha limitations
+## Known beta limitations
 
 - reference-backed training-data retention is not yet exposed publicly
 - native proximity-matrix and imputation APIs remain planned work
 - serialized-model compatibility is versioned but not yet guaranteed across all
-  future alpha releases
+  future beta releases
 - prebuilt wheel availability depends on the release platform matrix
 
 ## Development checks
@@ -99,3 +130,7 @@ cargo check --workspace
 cargo test --workspace
 ./rebuild_and_test.sh
 ```
+
+Parallel performance validation is intentionally separate from the test suite.
+See [`benchmarks/PARALLEL_VALIDATION.md`](benchmarks/PARALLEL_VALIDATION.md) for
+release-mode smoke checks and extended calibration commands.

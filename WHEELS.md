@@ -4,7 +4,7 @@ This project contains a compiled Rust extension. Wheels are therefore specific
 to a Python version, operating system, and CPU architecture. Installing a
 compatible wheel does not require a Rust toolchain.
 
-## Initial private-alpha matrix
+## Initial beta matrix
 
 - Linux x86_64 and aarch64
 - Windows x86_64
@@ -18,7 +18,7 @@ and needed by users.
 ## Installation
 
 ```bash
-python -m pip install /path/to/proximity_forests-0.1.0a1-*.whl
+python -m pip install /path/to/proximity_forests-*.whl
 ```
 
 Test an installed wheel outside the source checkout to avoid accidentally

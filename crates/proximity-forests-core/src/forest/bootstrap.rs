@@ -117,8 +117,15 @@ impl TreeSample {
         sampled_positions: Vec<usize>,
         multiplicities: Vec<usize>,
     ) -> CoreResult<Self> {
+        // Bootstrap and subsample construct these components together from a
+        // validated population. Avoid re-counting every draw and deriving the
+        // OOB complement a second time through the persisted-data validator.
         let out_of_bag_positions = Self::oob_from(&multiplicities);
-        Self::from_parts(sampled_positions, multiplicities, out_of_bag_positions)
+        Ok(Self {
+            sampled_positions,
+            multiplicities,
+            out_of_bag_positions,
+        })
     }
 
     fn oob_from(multiplicities: &[usize]) -> Vec<usize> {
@@ -191,6 +198,14 @@ mod tests {
         assert_eq!(sample.sampled_positions(), &[0, 1, 2, 3]);
         assert_eq!(sample.multiplicities(), &[1, 1, 1, 1]);
         assert!(sample.out_of_bag_positions().is_empty());
+    }
+
+    #[test]
+    fn trusted_construction_matches_persisted_validation() {
+        let generated = TreeSample::bootstrap(32, 41, &mut ModelRng::from_seed(23)).unwrap();
+        let (positions, multiplicities, oob) = generated.clone().into_parts();
+        let validated = TreeSample::from_parts(positions, multiplicities, oob).unwrap();
+        assert_eq!(generated, validated);
     }
 
     #[test]

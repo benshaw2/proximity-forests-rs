@@ -32,5 +32,6 @@ def test_disabled_oob_has_no_attributes():
 
 def test_zero_votes_warn_and_are_nan():
     X,y,_=data()
-    with pytest.warns(RuntimeWarning): model=ProximityForestClassifier(n_estimators=3,sampling="full",oob_score=True).fit(X,y[:,0])
+    with pytest.warns(RuntimeWarning, match=r"96 of 96 training samples received no OOB votes"):
+        model=ProximityForestClassifier(n_estimators=3,sampling="full",oob_score=True).fit(X,y[:,0])
     assert np.isnan(model.oob_score_); assert np.isnan(model.oob_decision_function_).all(); assert np.all(model.oob_vote_counts_==0)

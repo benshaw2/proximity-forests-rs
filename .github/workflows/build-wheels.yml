@@ -1,4 +1,4 @@
-name: Build alpha wheels
+name: Build beta wheels
 
 on:
   workflow_dispatch:
@@ -98,7 +98,7 @@ jobs:
           python -c "import numpy as np; import proximity_forests as pf;
           X=np.array([[0.,1.],[0.1,1.1],[4.,5.],[4.1,5.1]],dtype=np.float32);
           y=np.array([0,0,1,1]);
-          m=pf.ProximityForestClassifier(n_estimators=3,bootstrap=False,random_state=7).fit(X,y);
+          m=pf.ProximityForestClassifier(n_estimators=3,sampling='full',random_state=7).fit(X,y);
           assert m.predict(X).shape==(4,);
           print(pf.__version__, pf.runtime_info(), pf.__file__)"
 

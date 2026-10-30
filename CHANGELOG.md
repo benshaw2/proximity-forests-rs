@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.0b1
+
+First public beta with installable Python packaging and a Rust-native core.
+
+### Included
+- classification, regression, and proximity isolation estimators
+- tabular plus equal- and unequal-length univariate/multivariate inputs
+- configurable bootstrap, subsampling, and full-data observation sampling
+- dimension subset selection with distance/layout compatibility checks
+- bounded deterministic parallel fitting and inference through `n_jobs`
+- out-of-bag predictions, vote counts, scores, and zero-vote diagnostics
+- missing-compatible distances, multi-output targets, and versioned pickle payloads
+- exemplar-only and single-copy embedded training-data retention modes
+
+### Beta limitations
+- serialized models should be loaded with a compatible package version
+- public reference-backed retention, proximity matrices, and imputation remain future work
+- the Proximity Forest distance preset still requires its planned alignment audit
+- prebuilt wheel availability depends on the release platform matrix
+
+
 ## 0.1.0a2
 
 Second private alpha milestone focused on worker handling, input compatibility,
