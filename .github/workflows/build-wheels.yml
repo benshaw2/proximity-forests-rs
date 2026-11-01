@@ -222,6 +222,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify checked-out tag
+        run: |
+          test "$(git describe --tags --exact-match HEAD)" = "${GITHUB_REF_NAME}"
       - name: Download verified distributions
         uses: actions/download-artifact@v5
         with:

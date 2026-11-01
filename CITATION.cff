@@ -7,8 +7,8 @@ type: software
 version: 0.1.0b1
 date-released: 2026-11-01
 license: MIT
-repository-code: https://github.com/OWNER/proximity-forests-rs
-url: https://github.com/OWNER/proximity-forests-rs
+repository-code: https://github.com/benshaw2/proximity-forests-rs
+url: https://github.com/benshaw2/proximity-forests-rs
 authors:
   - family-names: Shaw
     given-names: Ben
