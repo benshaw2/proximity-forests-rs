@@ -40,4 +40,12 @@ for requirement in requirements:
 readme_lines = (root / "README.md").read_text(encoding="utf-8").splitlines()
 if len(readme_lines) > 100:
     raise SystemExit("README exceeds the concise landing-page limit")
+
+
+conf_text = (docs / "conf.py").read_text(encoding="utf-8")
+if "sys.path.insert" in conf_text or 'ROOT / "python"' in conf_text:
+    raise SystemExit(
+        "docs/conf.py must import the installed wheel, not shadow it with python/"
+    )
+
 print(f"Documentation audit passed: {len(sources)} source pages")

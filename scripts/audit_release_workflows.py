@@ -24,6 +24,7 @@ for token in (
     "--find-links dist",
     "sccache: true",
     "Verify documentation import target",
+    "working-directory: ${{ runner.temp }}",
 ):
     if token not in docs:
         raise SystemExit(f"documentation native-build setup missing {token}")
