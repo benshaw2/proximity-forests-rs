@@ -15,6 +15,19 @@ for token in (
     if token not in docs:
         raise SystemExit(f"documentation workflow missing {token}")
 
+
+for token in (
+    "PyO3/maturin-action@v1",
+    'command: develop',
+    'rust-toolchain: "1.85.0"',
+    "-r docs/requirements.txt",
+    "Verify documentation import target",
+):
+    if token not in docs:
+        raise SystemExit(f"documentation native-build setup missing {token}")
+if 'pip install -e ".[docs]"' in docs:
+    raise SystemExit("documentation workflow must not use pip editable native build")
+
 for token in (
     "fail-fast: false",
     "rust-toolchain: \"1.85.0\"",
