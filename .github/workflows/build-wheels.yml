@@ -212,3 +212,66 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
+
+  github-release:
+    name: Create GitHub prerelease
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs:
+      - verify-distributions
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: release-distributions
+          path: dist
+      - name: Refuse to replace an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; refusing to replace it."
+            exit 1
+          fi
+      - name: Create prerelease and attach verified artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dist/SHA256SUMS \
+            --verify-tag \
+            --prerelease \
+            --generate-notes \
+            --title "proximity-forests ${GITHUB_REF_NAME#v}"
+
+  publish-pypi:
+    name: Publish verified distributions to PyPI
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs:
+      - github-release
+    runs-on: ubuntu-22.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/proximity-forests/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: release-distributions
+          path: dist
+      - name: Keep only Python distribution files
+        run: |
+          rm -f dist/SHA256SUMS
+          test "$(find dist -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 20
+          test "$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 1
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+

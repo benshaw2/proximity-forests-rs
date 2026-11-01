@@ -49,8 +49,36 @@ for token in (
     if token not in wheels:
         raise SystemExit(f"distribution workflow missing {token}")
 
-for forbidden in ("pypa/gh-action-pypi-publish", "gh release create", "softprops/action-gh-release"):
-    if forbidden in wheels:
-        raise SystemExit("A1 must verify distributions but must not publish yet")
+
+
+
+for token in (
+    "github-release:",
+    "publish-pypi:",
+    "needs:\n      - verify-distributions",
+    "needs:\n      - github-release",
+    "gh release create",
+    "--verify-tag",
+    "--prerelease",
+    "name: pypi",
+    "id-token: write",
+    "pypa/gh-action-pypi-publish@release/v1",
+    "rm -f dist/SHA256SUMS",
+):
+    if token not in wheels:
+        raise SystemExit(f"tagged publication workflow missing {token}")
+
+for job_name in ("github-release", "publish-pypi"):
+    job = wheels.split(f"  {job_name}:", 1)[1]
+    if job_name == "github-release":
+        job = job.split("  publish-pypi:", 1)[0]
+    if "github.event_name == 'push'" not in job or "github.ref_type == 'tag'" not in job:
+        raise SystemExit(f"{job_name} must be restricted to pushed tags")
+
+pypi_job = wheels.split("  publish-pypi:", 1)[1]
+if "contents: write" in pypi_job:
+    raise SystemExit("PyPI job must not receive repository write permission")
+if "password:" in pypi_job or "username:" in pypi_job:
+    raise SystemExit("PyPI publication must use Trusted Publishing without stored credentials")
 
 print("Release workflow audit passed")
