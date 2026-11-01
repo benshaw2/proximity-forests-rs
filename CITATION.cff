@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: >
+  If you use this software, please cite this software release. A manuscript
+  describing the proximity-isolation methodology is in preparation.
+title: proximity-forests
+type: software
+version: 0.1.0b1
+date-released: 2026-11-01
+license: MIT
+repository-code: https://github.com/OWNER/proximity-forests-rs
+url: https://github.com/OWNER/proximity-forests-rs
+authors:
+  - family-names: Shaw
+    given-names: Ben

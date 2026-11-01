@@ -6,6 +6,11 @@ proximity-forest classification, regression, and isolation.
 > **Beta status:** Public APIs and serialized-model compatibility may change
 > before a stable release.
 
+> **Publication status:** This package provides a Rust/Python implementation of
+> methods also developed in the **[PFGAP](https://github.com/KevinMoonLab/PF-GAP)** project. A manuscript describing the
+> proximity-isolation methodology is in preparation. Citation information will
+> be updated when the manuscript becomes publicly available.
+
 ## Installation
 
 ```bash
