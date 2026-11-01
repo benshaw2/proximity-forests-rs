@@ -42,13 +42,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy>=1.23" -r docs/requirements.txt
-      - name: Build and install the native package for autodoc
+      - name: Build native wheel for autodoc
         uses: PyO3/maturin-action@v1
         with:
-          command: develop
+          command: build
           rust-toolchain: "1.85.0"
-          args: --release --locked
-          cache: sccache
+          args: >-
+            --release
+            --locked
+            --out dist
+            --interpreter python
+          sccache: true
+      - name: Install native wheel
+        run: >-
+          python -m pip install
+          --no-index
+          --no-deps
+          --force-reinstall
+          --find-links dist
+          proximity-forests
       - name: Verify documentation import target
         working-directory: ${{ runner.temp }}
         run: >-

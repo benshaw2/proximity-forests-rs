@@ -18,15 +18,21 @@ for token in (
 
 for token in (
     "PyO3/maturin-action@v1",
-    'command: develop',
+    'command: build',
     'rust-toolchain: "1.85.0"',
     "-r docs/requirements.txt",
+    "--find-links dist",
+    "sccache: true",
     "Verify documentation import target",
 ):
     if token not in docs:
         raise SystemExit(f"documentation native-build setup missing {token}")
 if 'pip install -e ".[docs]"' in docs:
     raise SystemExit("documentation workflow must not use pip editable native build")
+if "command: develop" in docs:
+    raise SystemExit("documentation workflow must build and install a wheel, not use maturin develop")
+if "cache: sccache" in docs:
+    raise SystemExit("maturin-action v1 expects sccache: true, not cache: sccache")
 
 for token in (
     "fail-fast: false",
