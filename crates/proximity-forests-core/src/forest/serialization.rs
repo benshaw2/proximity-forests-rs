@@ -14,7 +14,9 @@ use std::{error::Error, fmt};
 /// Eight-byte file marker: `PFOREST\0`.
 pub(crate) const MODEL_MAGIC: [u8; 8] = *b"PFOREST\0";
 /// Current envelope version.
-pub(crate) const MODEL_FORMAT_VERSION: u32 = 1;
+pub(crate) const MODEL_FORMAT_VERSION: u32 = 2;
+#[cfg(test)]
+const LEGACY_MODEL_FORMAT_VERSION: u32 = 1;
 const HEADER_LEN: usize = 8 + 4 + 1 + 8 + 4;
 
 /// Persisted estimator family.
@@ -217,6 +219,42 @@ pub(crate) struct BootstrapSampleDtoV1 {
     pub(crate) out_of_bag: Vec<u64>,
 }
 
+/// Version-two task DTO with one forest-level exemplar store.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) enum ModelDtoV2 {
+    Classification(ClassificationModelDtoV2),
+    Regression(RegressionModelDtoV2),
+    Isolation(IsolationModelDtoV2),
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct ClassificationModelDtoV2 {
+    pub(crate) forest: ForestDtoV2,
+    pub(crate) output_count: u32,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct RegressionModelDtoV2 {
+    pub(crate) forest: ForestDtoV2,
+    pub(crate) output_count: u32,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct IsolationModelDtoV2 {
+    pub(crate) forest: ForestDtoV2,
+    pub(crate) normalization_size: u64,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct ForestDtoV2 {
+    pub(crate) config: ForestConfigDtoV1,
+    pub(crate) trees: Vec<TreeDtoV2>,
+    pub(crate) exemplars: ObservationStoreDtoV1,
+    pub(crate) retained_training_data: RetainedTrainingDataDtoV1,
+    pub(crate) training_metadata: TrainingMetadataDtoV1,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct TreeDtoV2 {
+    pub(crate) root: u64,
+    pub(crate) nodes: Vec<TreeNodeDtoV1>,
+}
+
 /// Framing/DTO error independent of the runtime model error hierarchy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SerializationError {
@@ -252,7 +290,54 @@ fn dto_kind(dto: &ModelDtoV1) -> ModelKindDto {
     }
 }
 
+fn encode_body<T: Serialize>(
+    dto: &T,
+    kind: ModelKindDto,
+    version: u32,
+) -> Result<Vec<u8>, SerializationError> {
+    let body = postcard::to_allocvec(dto)
+        .map_err(|error| SerializationError::Encode(error.to_string()))?;
+    let length = u64::try_from(body.len()).map_err(|_| SerializationError::LengthOverflow)?;
+    let checksum = crc32fast::hash(&body);
+    let mut bytes = Vec::with_capacity(HEADER_LEN + body.len());
+    bytes.extend_from_slice(&MODEL_MAGIC);
+    bytes.extend_from_slice(&version.to_le_bytes());
+    bytes.push(kind as u8);
+    bytes.extend_from_slice(&length.to_le_bytes());
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    bytes.extend_from_slice(&body);
+    Ok(bytes)
+}
+fn framed_body(bytes: &[u8]) -> Result<(u32, ModelKindDto, &[u8]), SerializationError> {
+    if bytes.len() < HEADER_LEN {
+        return Err(SerializationError::Truncated);
+    }
+    if bytes[..8] != MODEL_MAGIC {
+        return Err(SerializationError::InvalidMagic);
+    }
+    let version = u32::from_le_bytes(bytes[8..12].try_into().expect("fixed slice"));
+    let kind = ModelKindDto::try_from(bytes[12])?;
+    let length = usize::try_from(u64::from_le_bytes(
+        bytes[13..21].try_into().expect("fixed slice"),
+    ))
+    .map_err(|_| SerializationError::LengthOverflow)?;
+    let expected = u32::from_le_bytes(bytes[21..25].try_into().expect("fixed slice"));
+    let end = HEADER_LEN
+        .checked_add(length)
+        .ok_or(SerializationError::LengthOverflow)?;
+    if end != bytes.len() {
+        return Err(SerializationError::Truncated);
+    }
+    let body = &bytes[HEADER_LEN..end];
+    let actual = crc32fast::hash(body);
+    if expected != actual {
+        return Err(SerializationError::ChecksumMismatch { expected, actual });
+    }
+    Ok((version, kind, body))
+}
+
 /// Encodes a version-one DTO into the portable framed representation.
+#[cfg(test)]
 pub(crate) fn encode_model_v1(dto: &ModelDtoV1) -> Result<Vec<u8>, SerializationError> {
     let body = postcard::to_allocvec(dto)
         .map_err(|error| SerializationError::Encode(error.to_string()))?;
@@ -260,7 +345,7 @@ pub(crate) fn encode_model_v1(dto: &ModelDtoV1) -> Result<Vec<u8>, Serialization
     let checksum = crc32fast::hash(&body);
     let mut bytes = Vec::with_capacity(HEADER_LEN + body.len());
     bytes.extend_from_slice(&MODEL_MAGIC);
-    bytes.extend_from_slice(&MODEL_FORMAT_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&LEGACY_MODEL_FORMAT_VERSION.to_le_bytes());
     bytes.push(dto_kind(dto) as u8);
     bytes.extend_from_slice(&length.to_le_bytes());
     bytes.extend_from_slice(&checksum.to_le_bytes());
@@ -270,6 +355,7 @@ pub(crate) fn encode_model_v1(dto: &ModelDtoV1) -> Result<Vec<u8>, Serialization
 
 /// Validates framing, size, checksum, version, and model-kind agreement before
 /// decoding the version-one DTO body.
+#[cfg(test)]
 pub(crate) fn decode_model_v1(bytes: &[u8]) -> Result<ModelDtoV1, SerializationError> {
     if bytes.len() < HEADER_LEN {
         return Err(SerializationError::Truncated);
@@ -278,7 +364,7 @@ pub(crate) fn decode_model_v1(bytes: &[u8]) -> Result<ModelDtoV1, SerializationE
         return Err(SerializationError::InvalidMagic);
     }
     let version = u32::from_le_bytes(bytes[8..12].try_into().expect("fixed slice"));
-    if version != MODEL_FORMAT_VERSION {
+    if version != LEGACY_MODEL_FORMAT_VERSION {
         return Err(SerializationError::UnsupportedVersion(version));
     }
     let header_kind = ModelKindDto::try_from(bytes[12])?;
@@ -1758,6 +1844,200 @@ impl TryFrom<&super::IsolationForest> for ModelDtoV1 {
     }
 }
 
+fn tree_nodes_to_dto(
+    tree: &super::ProximityTree,
+    kind: ModelKindDto,
+    outputs: Option<usize>,
+    copy_exemplar_id_map: Option<&[usize]>,
+) -> Result<TreeDtoV2, SerializationError> {
+    let legacy = tree_to_dto(tree, kind, outputs)?;
+    let mut nodes = legacy.nodes;
+    if let Some(id_map) = copy_exemplar_id_map {
+        for node in &mut nodes {
+            let TreeNodeDtoV1::Split { branches, .. } = node else {
+                continue;
+            };
+            for branch in branches {
+                let old = usize::try_from(branch.exemplar_id)
+                    .map_err(|_| SerializationError::LengthOverflow)?;
+                let training_index = id_map.get(old).copied().ok_or_else(|| {
+                    SerializationError::Conversion(
+                        "copy-mode branch references an exemplar outside its provenance map"
+                            .to_owned(),
+                    )
+                })?;
+                branch.exemplar_id = u32::try_from(training_index)
+                    .map_err(|_| SerializationError::LengthOverflow)?;
+            }
+        }
+    }
+    Ok(TreeDtoV2 {
+        root: legacy.root,
+        nodes,
+    })
+}
+fn forest_to_dto_v2(
+    forest: &super::FittedForest,
+    kind: ModelKindDto,
+    outputs: Option<usize>,
+) -> Result<ForestDtoV2, SerializationError> {
+    let legacy = forest_to_dto(forest, kind, outputs)?;
+    let first_tree = forest
+        .trees()
+        .first()
+        .ok_or_else(|| SerializationError::Conversion("fitted forest has no trees".to_owned()))?;
+    let shared_exemplars = first_tree.exemplars().ok_or_else(|| {
+        SerializationError::Conversion("fitted forest has no shared exemplar pool".to_owned())
+    })?;
+    if forest
+        .trees()
+        .iter()
+        .any(|tree| !tree.shares_exemplar_pool_with(first_tree))
+    {
+        return Err(SerializationError::Conversion(
+            "fitted trees do not share one exemplar pool".to_owned(),
+        ));
+    }
+
+    let (serialized_exemplars, retained_training_data, copy_exemplar_id_map) = match forest
+        .retained_training_data()
+    {
+        super::RetainedTrainingData::Owned(training) => {
+            let map = first_tree.exemplar_training_indices();
+            // A newly fitted Copy model has provenance and is rewritten from
+            // compact pool IDs to full-training indices. A reloaded A7 model
+            // already uses the full collection and therefore needs no map.
+            if map.is_none() && exemplar_count(shared_exemplars) != exemplar_count(training) {
+                return Err(SerializationError::Conversion(
+                        "copy model lacks provenance and does not use its full retained dataset as the exemplar pool".to_owned(),
+                    ));
+            }
+            (
+                ObservationStoreDtoV1::try_from(training)?,
+                RetainedTrainingDataDtoV1::None,
+                map,
+            )
+        }
+        _ => (
+            ObservationStoreDtoV1::try_from(shared_exemplars)?,
+            legacy.retained_training_data,
+            None,
+        ),
+    };
+
+    Ok(ForestDtoV2 {
+        config: legacy.config,
+        trees: forest
+            .trees()
+            .iter()
+            .map(|tree| tree_nodes_to_dto(tree, kind, outputs, copy_exemplar_id_map))
+            .collect::<Result<_, _>>()?,
+        exemplars: serialized_exemplars,
+        retained_training_data,
+        training_metadata: legacy.training_metadata,
+    })
+}
+fn forest_from_dto_v2(
+    dto: ForestDtoV2,
+    kind: ModelKindDto,
+    outputs: Option<usize>,
+) -> Result<super::FittedForest, SerializationError> {
+    use std::sync::Arc;
+    let exemplars = Arc::new(super::OwnedObservationStore::try_from(dto.exemplars)?);
+    let count = exemplar_count(&exemplars);
+    let mut trees = Vec::with_capacity(dto.trees.len());
+    for tree in dto.trees {
+        let legacy = TreeDtoV1 {
+            root: tree.root,
+            nodes: tree.nodes,
+            exemplars: ObservationStoreDtoV1::try_from(exemplars.as_ref())?,
+        };
+        let rebuilt = tree_from_dto(legacy, kind, outputs)?;
+        validate_tree_graph(
+            rebuilt.nodes(),
+            rebuilt.root().expect("validated tree").get(),
+            count,
+            kind,
+            outputs,
+        )?;
+        trees.push(
+            super::ProximityTree::from_shared_parts(
+                rebuilt.nodes().to_vec(),
+                Arc::clone(&exemplars),
+            )
+            .map_err(|error| {
+                SerializationError::Conversion(format!("invalid fitted tree: {error}"))
+            })?,
+        );
+    }
+    let legacy = ForestDtoV1 {
+        config: dto.config,
+        trees: Vec::new(),
+        retained_training_data: dto.retained_training_data,
+        training_metadata: dto.training_metadata,
+    };
+    let mut config = super::ForestConfig::try_from(legacy.config)?;
+    let retained = match (config.data_retention, legacy.retained_training_data) {
+        (super::DataRetention::Copy, RetainedTrainingDataDtoV1::None) => {
+            super::RetainedTrainingData::Owned(exemplars.as_ref().clone())
+        }
+        (_, dto) => super::RetainedTrainingData::try_from(dto)?,
+    };
+    if let super::RetainedTrainingData::Reference(descriptor) = &retained {
+        config.external_training_data = Some(descriptor.clone());
+    }
+    let metadata = super::TrainingMetadata::try_from(legacy.training_metadata)?;
+    if trees.len() != config.tree_count.get() || metadata.bootstrap().len() != trees.len() {
+        return Err(SerializationError::Conversion(
+            "serialized tree and metadata counts do not match forest configuration".to_owned(),
+        ));
+    }
+    validate_retention_state(&config, &retained, metadata.sample_count())?;
+    Ok(super::FittedForest::new(config, trees, retained, metadata))
+}
+fn dto_kind_v2(dto: &ModelDtoV2) -> ModelKindDto {
+    match dto {
+        ModelDtoV2::Classification(_) => ModelKindDto::Classification,
+        ModelDtoV2::Regression(_) => ModelKindDto::Regression,
+        ModelDtoV2::Isolation(_) => ModelKindDto::Isolation,
+    }
+}
+fn encode_model_v2(dto: &ModelDtoV2) -> Result<Vec<u8>, SerializationError> {
+    encode_body(dto, dto_kind_v2(dto), MODEL_FORMAT_VERSION)
+}
+fn decode_any(bytes: &[u8]) -> Result<EitherDto, SerializationError> {
+    let (version, header, body) = framed_body(bytes)?;
+    match version {
+        1 => {
+            let dto: ModelDtoV1 = postcard::from_bytes(body)
+                .map_err(|e| SerializationError::Decode(e.to_string()))?;
+            if dto_kind(&dto) != header {
+                return Err(SerializationError::KindMismatch {
+                    header,
+                    body: dto_kind(&dto),
+                });
+            }
+            Ok(EitherDto::V1(dto))
+        }
+        2 => {
+            let dto: ModelDtoV2 = postcard::from_bytes(body)
+                .map_err(|e| SerializationError::Decode(e.to_string()))?;
+            if dto_kind_v2(&dto) != header {
+                return Err(SerializationError::KindMismatch {
+                    header,
+                    body: dto_kind_v2(&dto),
+                });
+            }
+            Ok(EitherDto::V2(dto))
+        }
+        other => Err(SerializationError::UnsupportedVersion(other)),
+    }
+}
+enum EitherDto {
+    V1(ModelDtoV1),
+    V2(ModelDtoV2),
+}
+
 fn as_core_error(error: SerializationError) -> crate::CoreError {
     crate::CoreError::invalid_data(format!(
         "invalid serialized proximity-forest model: {error}"
@@ -1767,47 +2047,93 @@ fn as_core_error(error: SerializationError) -> crate::CoreError {
 pub(crate) fn classification_to_bytes(
     model: &super::ClassificationForest,
 ) -> crate::CoreResult<Vec<u8>> {
-    let dto = ModelDtoV1::try_from(model).map_err(as_core_error)?;
-    encode_model_v1(&dto).map_err(as_core_error)
+    let dto = ModelDtoV2::Classification(ClassificationModelDtoV2 {
+        forest: forest_to_dto_v2(
+            model.forest(),
+            ModelKindDto::Classification,
+            Some(model.output_count()),
+        )
+        .map_err(as_core_error)?,
+        output_count: u32::try_from(model.output_count())
+            .map_err(|_| as_core_error(SerializationError::LengthOverflow))?,
+    });
+    encode_model_v2(&dto).map_err(as_core_error)
 }
-
 pub(crate) fn classification_from_bytes(
     bytes: &[u8],
 ) -> crate::CoreResult<super::ClassificationForest> {
-    match decode_model_v1(bytes).map_err(as_core_error)? {
-        ModelDtoV1::Classification(dto) => {
+    match decode_any(bytes).map_err(as_core_error)? {
+        EitherDto::V1(ModelDtoV1::Classification(dto)) => {
             super::ClassificationForest::try_from(dto).map_err(as_core_error)
+        }
+        EitherDto::V2(ModelDtoV2::Classification(dto)) => {
+            let outputs = usize::try_from(dto.output_count)
+                .map_err(|_| as_core_error(SerializationError::LengthOverflow))?;
+            Ok(super::ClassificationForest::new(
+                forest_from_dto_v2(dto.forest, ModelKindDto::Classification, Some(outputs))
+                    .map_err(as_core_error)?,
+                outputs,
+            ))
         }
         _ => Err(crate::CoreError::invalid_data(
             "serialized model is not a classification forest",
         )),
     }
 }
-
 pub(crate) fn regression_to_bytes(model: &super::RegressionForest) -> crate::CoreResult<Vec<u8>> {
-    let dto = ModelDtoV1::try_from(model).map_err(as_core_error)?;
-    encode_model_v1(&dto).map_err(as_core_error)
+    let dto = ModelDtoV2::Regression(RegressionModelDtoV2 {
+        forest: forest_to_dto_v2(
+            model.forest(),
+            ModelKindDto::Regression,
+            Some(model.output_count()),
+        )
+        .map_err(as_core_error)?,
+        output_count: u32::try_from(model.output_count())
+            .map_err(|_| as_core_error(SerializationError::LengthOverflow))?,
+    });
+    encode_model_v2(&dto).map_err(as_core_error)
 }
-
 pub(crate) fn regression_from_bytes(bytes: &[u8]) -> crate::CoreResult<super::RegressionForest> {
-    match decode_model_v1(bytes).map_err(as_core_error)? {
-        ModelDtoV1::Regression(dto) => {
+    match decode_any(bytes).map_err(as_core_error)? {
+        EitherDto::V1(ModelDtoV1::Regression(dto)) => {
             super::RegressionForest::try_from(dto).map_err(as_core_error)
+        }
+        EitherDto::V2(ModelDtoV2::Regression(dto)) => {
+            let outputs = usize::try_from(dto.output_count)
+                .map_err(|_| as_core_error(SerializationError::LengthOverflow))?;
+            Ok(super::RegressionForest::new(
+                forest_from_dto_v2(dto.forest, ModelKindDto::Regression, Some(outputs))
+                    .map_err(as_core_error)?,
+                outputs,
+            ))
         }
         _ => Err(crate::CoreError::invalid_data(
             "serialized model is not a regression forest",
         )),
     }
 }
-
 pub(crate) fn isolation_to_bytes(model: &super::IsolationForest) -> crate::CoreResult<Vec<u8>> {
-    let dto = ModelDtoV1::try_from(model).map_err(as_core_error)?;
-    encode_model_v1(&dto).map_err(as_core_error)
+    let dto = ModelDtoV2::Isolation(IsolationModelDtoV2 {
+        forest: forest_to_dto_v2(model.forest(), ModelKindDto::Isolation, None)
+            .map_err(as_core_error)?,
+        normalization_size: usize_to_u64(model.normalization_size()).map_err(as_core_error)?,
+    });
+    encode_model_v2(&dto).map_err(as_core_error)
 }
-
 pub(crate) fn isolation_from_bytes(bytes: &[u8]) -> crate::CoreResult<super::IsolationForest> {
-    match decode_model_v1(bytes).map_err(as_core_error)? {
-        ModelDtoV1::Isolation(dto) => super::IsolationForest::try_from(dto).map_err(as_core_error),
+    match decode_any(bytes).map_err(as_core_error)? {
+        EitherDto::V1(ModelDtoV1::Isolation(dto)) => {
+            super::IsolationForest::try_from(dto).map_err(as_core_error)
+        }
+        EitherDto::V2(ModelDtoV2::Isolation(dto)) => {
+            let size = u64_to_usize(dto.normalization_size, "isolation normalization size")
+                .map_err(as_core_error)?;
+            Ok(super::IsolationForest::new(
+                forest_from_dto_v2(dto.forest, ModelKindDto::Isolation, None)
+                    .map_err(as_core_error)?,
+                size,
+            ))
+        }
         _ => Err(crate::CoreError::invalid_data(
             "serialized model is not an isolation forest",
         )),
@@ -2040,11 +2366,12 @@ mod tests {
     }
     #[test]
     fn future_version_is_rejected() {
+        let future_version = MODEL_FORMAT_VERSION + 1;
         let mut bytes = encode_model_v1(&fixture()).unwrap();
-        bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&future_version.to_le_bytes());
         assert_eq!(
             decode_model_v1(&bytes),
-            Err(SerializationError::UnsupportedVersion(2))
+            Err(SerializationError::UnsupportedVersion(future_version))
         );
     }
 

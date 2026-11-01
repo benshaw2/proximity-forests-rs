@@ -21,8 +21,9 @@ use crate::{
     },
     error::core_error,
     input::{
-        MatrixInput, SeriesArrayInput, UnequalSeriesInput, configure_data_retention,
-        parse_dimension_selection, parse_observation_sampling,
+        MatrixInput, NpyReference, SeriesArrayInput, UnequalSeriesInput, configure_data_retention,
+        configure_multivariate_data_retention, parse_dimension_selection,
+        parse_observation_sampling,
     },
 };
 
@@ -147,11 +148,17 @@ impl NativeProximityForestClassifier {
     }
 
     /// Fits row-major encoded single- or multi-output class identifiers.
+    #[pyo3(signature = (x, y, class_counts, reference_path=None, payload_offset=None, file_size=None, reference_shape=None, fingerprint=None))]
     fn fit(
         &mut self,
         x: &Bound<'_, PyAny>,
         y: PyReadonlyArray2<'_, u32>,
         class_counts: Vec<usize>,
+        reference_path: Option<String>,
+        payload_offset: Option<u64>,
+        file_size: Option<u64>,
+        reference_shape: Option<Vec<usize>>,
+        fingerprint: Option<String>,
     ) -> PyResult<()> {
         let input = MatrixInput::extract(x)?;
         input.contains_nan()?;
@@ -206,7 +213,24 @@ impl NativeProximityForestClassifier {
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
         config.dimension_selection = parse_dimension_selection(&self.max_features)?;
-        configure_data_retention(&mut config, &self.data_retention)?;
+        let reference = match (reference_path, payload_offset, file_size, reference_shape) {
+            (Some(path), Some(payload_offset), Some(file_size), Some(shape)) => {
+                Some(NpyReference {
+                    path: path.into(),
+                    payload_offset,
+                    file_size,
+                    shape: shape.into_boxed_slice(),
+                    fingerprint: fingerprint.map(String::into_boxed_str),
+                })
+            }
+            (None, None, None, None) if fingerprint.is_none() => None,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "reference_path, payload_offset, and file_size must be supplied together",
+                ));
+            }
+        };
+        configure_data_retention(&mut config, &self.data_retention, Some(&input), reference)?;
         let feature_count = input.columns();
         let model = input.with_vector_views(|views| {
             fit_vector_classification_forest(
@@ -228,11 +252,17 @@ impl NativeProximityForestClassifier {
     }
 
     /// Fits an equal-length multivariate collection shaped (cases, channels, timepoints).
+    #[pyo3(signature = (x, y, class_counts, reference_path=None, payload_offset=None, file_size=None, reference_shape=None, fingerprint=None))]
     fn fit_multivariate(
         &mut self,
         x: &Bound<'_, PyAny>,
         y: PyReadonlyArray2<'_, u32>,
         class_counts: Vec<usize>,
+        reference_path: Option<String>,
+        payload_offset: Option<u64>,
+        file_size: Option<u64>,
+        reference_shape: Option<Vec<usize>>,
+        fingerprint: Option<String>,
     ) -> PyResult<()> {
         let input = SeriesArrayInput::extract(x)?;
         let shape = y.shape();
@@ -263,7 +293,29 @@ impl NativeProximityForestClassifier {
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
         config.dimension_selection = parse_dimension_selection(&self.max_features)?;
-        configure_data_retention(&mut config, &self.data_retention)?;
+        let reference = match (reference_path, payload_offset, file_size, reference_shape) {
+            (Some(path), Some(payload_offset), Some(file_size), Some(shape)) => {
+                Some(NpyReference {
+                    path: path.into(),
+                    payload_offset,
+                    file_size,
+                    shape: shape.into_boxed_slice(),
+                    fingerprint: fingerprint.map(String::into_boxed_str),
+                })
+            }
+            (None, None, None, None) if fingerprint.is_none() => None,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "reference_path, payload_offset, file_size, and reference_shape must be supplied together",
+                ));
+            }
+        };
+        configure_multivariate_data_retention(
+            &mut config,
+            &self.data_retention,
+            &input,
+            reference,
+        )?;
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_classification_forest(
                 config,
@@ -415,7 +467,7 @@ impl NativeProximityForestClassifier {
         config.minimum_split_size =
             NonZeroUsize::new(self.min_samples_split).expect("validated positive");
         config.dimension_selection = parse_dimension_selection(&self.max_features)?;
-        configure_data_retention(&mut config, &self.data_retention)?;
+        configure_data_retention(&mut config, &self.data_retention, None, None)?;
         self.model = Some(input.with_series_views(|views| {
             fit_multivariate_classification_forest(
                 config,
@@ -691,6 +743,28 @@ impl NativeProximityForestClassifier {
         Ok(array.into_pyarray(py))
     }
 
+    /// Returns persisted external-training metadata without opening the file.
+    #[getter]
+    fn external_training_data_(
+        &self,
+    ) -> PyResult<Option<(String, String, Vec<usize>, u64, u64, u64, Option<String>)>> {
+        let forest = self.model.as_ref().ok_or_else(not_fitted)?.forest();
+        let Some(descriptor) = forest.retained_training_data().external() else {
+            return Ok(None);
+        };
+        let path = descriptor.path().to_str().ok_or_else(|| {
+            PyValueError::new_err("external training-data path is not valid UTF-8")
+        })?;
+        Ok(Some((
+            path.to_owned(),
+            descriptor.scalar_kind().as_str().to_owned(),
+            descriptor.shape().to_vec(),
+            descriptor.payload_offset(),
+            descriptor.payload_length(),
+            descriptor.file_size(),
+            descriptor.fingerprint().map(str::to_owned),
+        )))
+    }
     #[getter]
     fn data_retention_(&self) -> PyResult<&'static str> {
         let forest = self.model.as_ref().ok_or_else(not_fitted)?.forest();

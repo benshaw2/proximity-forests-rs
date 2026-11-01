@@ -1,0 +1,3 @@
+sphinx>=8,<9
+furo>=2025.7.19
+myst-parser>=4,<5

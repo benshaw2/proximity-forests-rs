@@ -558,6 +558,7 @@ pub struct NpyReference {
     pub payload_offset: u64,
     /// Complete backing-file size in bytes.
     pub file_size: u64,
+    pub shape: Box<[usize]>,
     /// Optional externally calculated integrity fingerprint.
     pub fingerprint: Option<Box<str>>,
 }
@@ -587,11 +588,26 @@ pub fn external_training_data(
             "memory-mapped matrix payload extends beyond its backing file",
         ));
     }
+    let logical_values = input
+        .rows()
+        .checked_mul(input.columns())
+        .ok_or_else(|| PyValueError::new_err("reference shape overflows usize"))?;
+    let described_values = reference.shape.iter().try_fold(1usize, |total, &size| {
+        total
+            .checked_mul(size)
+            .ok_or_else(|| PyValueError::new_err("reference shape overflows usize"))
+    })?;
+    if reference.shape.first().copied() != Some(input.rows()) || described_values != logical_values
+    {
+        return Err(PyValueError::new_err(
+            "reference .npy shape does not match the vector fitting view",
+        ));
+    }
     Ok(ExternalTrainingData::new(
         reference.path,
         ExternalDataFormat::Npy,
         input.scalar_kind(),
-        vec![shape.0, shape.1].into_boxed_slice(),
+        reference.shape.clone(),
         reference.payload_offset,
         payload_length,
         reference.file_size,
@@ -603,15 +619,116 @@ pub fn external_training_data(
 ///
 /// Reference retention remains blocked until the estimator passes validated
 /// persistent mapping metadata alongside the borrowed matrix.
-pub fn configure_data_retention(config: &mut ForestConfig, value: &str) -> PyResult<()> {
-    let retention = parse_data_retention(value)?;
-    if retention == DataRetention::Reference {
+pub fn external_multivariate_training_data(
+    input: &SeriesArrayInput<'_>,
+    reference: NpyReference,
+) -> PyResult<ExternalTrainingData> {
+    let scalar_kind = match input {
+        SeriesArrayInput::F32(_) => ScalarKind::F32,
+        SeriesArrayInput::F64(_) => ScalarKind::F64,
+    };
+    let logical_values = input
+        .cases()
+        .checked_mul(input.channels())
+        .and_then(|value| value.checked_mul(input.timepoints()))
+        .ok_or_else(|| PyValueError::new_err("reference shape overflows usize"))?;
+    let described_values = reference.shape.iter().try_fold(1usize, |total, &size| {
+        total
+            .checked_mul(size)
+            .ok_or_else(|| PyValueError::new_err("reference shape overflows usize"))
+    })?;
+    if reference.shape.as_ref() != [input.cases(), input.channels(), input.timepoints()]
+        || described_values != logical_values
+    {
         return Err(PyValueError::new_err(
-            "data_retention='reference' requires a persistent NumPy .npy memory map; this estimator boundary does not expose mapping metadata yet",
+            "reference .npy shape does not match the multivariate fitting view",
         ));
     }
+    let payload_length = u64::try_from(logical_values)
+        .ok()
+        .and_then(|count| count.checked_mul(u64::try_from(scalar_kind.size_in_bytes()).ok()?))
+        .ok_or_else(|| PyValueError::new_err("reference payload length overflows u64"))?;
+    let payload_end = reference
+        .payload_offset
+        .checked_add(payload_length)
+        .ok_or_else(|| PyValueError::new_err("reference payload range overflows u64"))?;
+    if payload_end != reference.file_size {
+        return Err(PyValueError::new_err(
+            "reference payload does not occupy the expected complete .npy file",
+        ));
+    }
+    Ok(ExternalTrainingData::new(
+        reference.path,
+        ExternalDataFormat::Npy,
+        scalar_kind,
+        reference.shape,
+        reference.payload_offset,
+        payload_length,
+        reference.file_size,
+        reference.fingerprint,
+    ))
+}
+
+pub fn configure_multivariate_data_retention(
+    config: &mut ForestConfig,
+    value: &str,
+    input: &SeriesArrayInput<'_>,
+    reference: Option<NpyReference>,
+) -> PyResult<()> {
+    let retention = parse_data_retention(value)?;
     config.data_retention = retention;
-    config.external_training_data = None;
+    config.external_training_data = match retention {
+        DataRetention::Reference => Some(external_multivariate_training_data(
+            input,
+            reference.ok_or_else(|| {
+                PyValueError::new_err(
+                    "reference retention requires validated 3D .npy mapping metadata",
+                )
+            })?,
+        )?),
+        _ => {
+            if reference.is_some() {
+                return Err(PyValueError::new_err(
+                    "external mapping metadata requires data_retention='reference'",
+                ));
+            }
+            None
+        }
+    };
+    Ok(())
+}
+
+pub fn configure_data_retention(
+    config: &mut ForestConfig,
+    value: &str,
+    input: Option<&MatrixInput<'_>>,
+    reference: Option<NpyReference>,
+) -> PyResult<()> {
+    let retention = parse_data_retention(value)?;
+    config.data_retention = retention;
+    config.external_training_data = match retention {
+        DataRetention::Reference => {
+            let input = input.ok_or_else(|| {
+                PyValueError::new_err(
+                    "reference retention currently supports dense 2D .npy input only",
+                )
+            })?;
+            let reference = reference.ok_or_else(|| {
+                PyValueError::new_err(
+                    "reference retention requires validated .npy mapping metadata",
+                )
+            })?;
+            Some(external_training_data(input, reference)?)
+        }
+        _ => {
+            if reference.is_some() {
+                return Err(PyValueError::new_err(
+                    "external mapping metadata requires data_retention='reference'",
+                ));
+            }
+            None
+        }
+    };
     Ok(())
 }
 

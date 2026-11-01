@@ -1,8 +1,9 @@
 //! Compact fitted-tree representation and iterative traversal primitives.
+use std::sync::Arc;
 
 use crate::{DistanceConfig, NodeMembership};
 
-use super::{LeafPayload, OwnedObservationStore};
+use super::{FinishedExemplars, LeafPayload, OwnedObservationStore};
 
 /// Stable index of one fitted tree node.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -95,6 +96,11 @@ impl ExemplarBranch {
     pub const fn child(self) -> NodeId {
         self.child
     }
+
+    /// Replaces the exemplar identifier while preserving the child edge.
+    pub(crate) const fn set_exemplar(&mut self, exemplar: ExemplarId) {
+        self.exemplar = exemplar;
+    }
 }
 
 /// Fitted internal-node routing state.
@@ -136,6 +142,11 @@ impl SplitNode {
     #[must_use]
     pub fn branches(&self) -> &[ExemplarBranch] {
         &self.branches
+    }
+
+    /// Returns mutable exemplar branches for checked model compaction.
+    pub(crate) fn branches_mut(&mut self) -> &mut [ExemplarBranch] {
+        &mut self.branches
     }
 }
 
@@ -223,7 +234,8 @@ pub enum TreeNode {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProximityTree {
     nodes: Vec<TreeNode>,
-    exemplars: Option<OwnedObservationStore>,
+    exemplars: Option<Arc<OwnedObservationStore>>,
+    exemplar_training_indices: Option<Arc<[usize]>>,
 }
 
 impl ProximityTree {
@@ -233,18 +245,36 @@ impl ProximityTree {
         Self {
             nodes: Vec::new(),
             exemplars: None,
+            exemplar_training_indices: None,
         }
     }
 
-    /// Attaches immutable tree-local exemplar values after construction.
-    pub fn set_exemplars(&mut self, exemplars: OwnedObservationStore) {
-        self.exemplars = Some(exemplars);
+    /// Attaches immutable tree-local exemplar values and their training identities.
+    pub fn set_exemplars(&mut self, exemplars: FinishedExemplars) {
+        let (store, training_indices) = exemplars.into_parts();
+        self.exemplars = Some(Arc::new(store));
+        self.exemplar_training_indices = Some(training_indices.into());
+    }
+    /// Returns original training indices in local exemplar-ID order.
+    #[must_use]
+    pub fn exemplar_training_indices(&self) -> Option<&[usize]> {
+        self.exemplar_training_indices.as_deref()
     }
 
     /// Returns tree-local model-owned exemplar values.
     #[must_use]
-    pub const fn exemplars(&self) -> Option<&OwnedObservationStore> {
-        self.exemplars.as_ref()
+    pub fn exemplars(&self) -> Option<&OwnedObservationStore> {
+        self.exemplars.as_deref()
+    }
+
+    /// Reports whether two fitted trees reference the identical exemplar pool.
+    #[must_use]
+    pub(crate) fn shares_exemplar_pool_with(&self, other: &Self) -> bool {
+        match (&self.exemplars, &other.exemplars) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     /// Reconstructs a fitted tree from a validated node arena and exemplar store.
@@ -259,7 +289,27 @@ impl ProximityTree {
         }
         Ok(Self {
             nodes,
+            exemplars: Some(Arc::new(exemplars)),
+            // Format v1 did not preserve provenance. Restored v1 trees remain
+            // usable, but are upgraded by value during the serialization slice.
+            exemplar_training_indices: None,
+        })
+    }
+
+    /// Reconstructs a fitted tree against one forest-owned exemplar pool.
+    pub(crate) fn from_shared_parts(
+        nodes: Vec<TreeNode>,
+        exemplars: Arc<OwnedObservationStore>,
+    ) -> crate::CoreResult<Self> {
+        if nodes.is_empty() {
+            return Err(crate::CoreError::invalid_data(
+                "a fitted tree requires at least one node",
+            ));
+        }
+        Ok(Self {
+            nodes,
             exemplars: Some(exemplars),
+            exemplar_training_indices: None,
         })
     }
 
@@ -305,6 +355,45 @@ impl ProximityTree {
     #[must_use]
     pub fn nodes(&self) -> &[TreeNode] {
         &self.nodes
+    }
+
+    /// Attaches one forest-owned pool shared by all fitted trees.
+    pub(crate) fn replace_shared_exemplars(
+        &mut self,
+        exemplars: Arc<OwnedObservationStore>,
+        training_indices: Arc<[usize]>,
+    ) {
+        self.exemplars = Some(exemplars);
+        self.exemplar_training_indices = Some(training_indices);
+    }
+
+    /// Rewrites every branch exemplar through a complete old-to-new ID map.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a branch references an unavailable local ID or a
+    /// remapped identifier cannot be represented by the compact `u32` ID type.
+    pub(crate) fn remap_exemplars(&mut self, old_to_new: &[usize]) -> crate::CoreResult<()> {
+        for node in &mut self.nodes {
+            let TreeNode::Split(split) = node else {
+                continue;
+            };
+            for branch in split.branches_mut() {
+                let old = branch.exemplar().index();
+                let new = old_to_new.get(old).copied().ok_or_else(|| {
+                    crate::CoreError::invalid_data(format!(
+                        "tree branch exemplar {old} is outside the compaction map"
+                    ))
+                })?;
+                let id = ExemplarId::try_from_index(new).ok_or_else(|| {
+                    crate::CoreError::invalid_data(
+                        "forest exemplar pool contains too many observations for u32 IDs",
+                    )
+                })?;
+                branch.set_exemplar(id);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -403,6 +492,33 @@ mod tests {
         assert_eq!(root.get(), 0);
         assert_eq!(child.get(), 1);
         assert_eq!(tree.root(), Some(root));
+    }
+
+    #[test]
+    fn exemplar_ids_can_be_checked_and_remapped_for_forest_pooling() {
+        use super::{ExemplarBranch, ExemplarId, SplitNode};
+        use crate::DistanceConfig;
+
+        let membership =
+            NodeMembership::from_occurrences(&[Some(SampleId::new(1)), Some(SampleId::new(2))])
+                .expect("valid membership");
+        let mut tree = ProximityTree::new();
+        let root = tree.push(TreeNode::Leaf(LeafNode::placeholder(&membership)));
+        let child = tree.push(TreeNode::Leaf(LeafNode::placeholder(&membership)));
+        tree.replace(
+            root,
+            TreeNode::Split(SplitNode::new(
+                DistanceConfig::SquaredEuclidean,
+                Vec::new(),
+                vec![ExemplarBranch::new(ExemplarId::new(1), child)],
+            )),
+        );
+        tree.remap_exemplars(&[9, 4]).expect("valid remap");
+        let TreeNode::Split(split) = &tree.nodes()[0] else {
+            panic!("split")
+        };
+        assert_eq!(split.branches()[0].exemplar().index(), 4);
+        assert!(tree.remap_exemplars(&[0]).is_err());
     }
 
     #[test]

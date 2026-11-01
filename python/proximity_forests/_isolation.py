@@ -9,15 +9,89 @@ from ._core import _NativeProximityIsolationForest
 from ._distances import normalize_distances
 from ._sampling import normalize_sampling
 from ._max_features import normalize_max_features
+from ._reference import prepare_reference_input, validate_reference_descriptor
 
 
 class ProximityIsolationForest:
-    """Isolation Forest scoring with proximity-based node splits.
+    """Proximity-based isolation forest for anomaly detection.
 
-    ``score_samples`` follows scikit-learn's orientation: lower values are more
-    abnormal. ``decision_function`` subtracts ``offset_`` so negative values are
-    classified as outliers, and ``predict`` returns ``-1`` for outliers and
-    ``1`` for inliers.
+    Trees use distance-based exemplar splits and isolation leaf statistics.
+    ``score_samples`` returns normality-oriented scores, where lower values are
+    more abnormal. ``decision_function`` shifts scores by ``offset_`` and
+    ``predict`` returns ``-1`` for outliers and ``1`` for inliers.
+
+    Parameters
+    ----------
+    n_estimators : int, default=100
+        Number of trees in the forest.
+    n_candidates : int, default=5
+        Number of candidate splitters evaluated at each splittable node.
+    n_exemplars : int, default=2
+        Number of branch exemplars generated for each isolation candidate.
+    max_depth : int or None, default=None
+        Maximum tree depth. ``None`` allows growth until another stopping rule
+        applies.
+    min_samples_split : int, default=2
+        Minimum number of sampled observations required to split a node.
+    max_features : {None, "sqrt", "log2"}, int, or float, default=None
+        Number of features or channels sampled for a candidate splitter.
+        ``None`` uses all available dimensions. An integer selects an absolute
+        count. A float in ``(0, 1]`` selects a proportion.
+    distances : str, distance specification, or sequence, default="default"
+        Distance catalog used to generate candidate splitters. The accepted
+        distances depend on whether ``X`` is vector, equal-length time-series,
+        or unequal-length time-series data.
+    contamination : {"auto"} or float, default="auto"
+        Expected outlier proportion used to establish the prediction threshold.
+        A float must be in ``(0, 0.5]``. ``"auto"`` uses an offset of ``-0.5``.
+    sampling : {"bootstrap", "subsample", "full"}, default="subsample"
+        Per-tree observation sampling policy. ``"bootstrap"`` samples with
+        replacement, ``"subsample"`` samples distinct observations, and
+        ``"full"`` uses every observation in its original order.
+    sample_size : int, float, or None, default=256
+        Per-tree sample size. An integer is an absolute count and a float in
+        ``(0, 1]`` is a proportion. ``None`` uses the training-set size.
+    random_state : int or None, default=None
+        Seed controlling observation sampling, candidate generation, parameter
+        sampling, exemplar selection, and random tie resolution. ``None`` is
+        currently equivalent to seed ``0``.
+    n_jobs : int or None, default=1
+        Worker budget. ``1`` requests sequential execution. ``None`` and ``-1``
+        use the available logical CPUs.
+    data_retention : {"exemplars", "copy", "reference"}, default="exemplars"
+        Training-data retention policy. ``"exemplars"`` embeds only observations
+        selected by fitted splitters. ``"copy"`` embeds the complete training
+        collection once. ``"reference"`` stores metadata for a complete,
+        C-contiguous ``.npy`` memory map while retaining fitted exemplars for
+        ordinary inference.
+
+    Attributes
+    ----------
+    offset_ : float
+        Threshold subtracted by ``decision_function``. Negative shifted scores
+        are predicted as outliers.
+    max_samples_ : int
+        Resolved number of observations sampled for each tree.
+    input_layout_ : {"vector", "multivariate", "unequal_multivariate"}
+        Input layout established during fitting.
+    n_features_in_ : int
+        Number of vector features, or number of channels for time-series input.
+    n_channels_in_ : int
+        Number of channels for multivariate time-series input.
+    n_timepoints_in_ : int or None
+        Time points per case for equal-length multivariate input, or ``None``
+        for unequal-length input.
+    data_retention_ : str
+        Retention policy used by the fitted model.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from proximity_forests import ProximityIsolationForest
+    >>> X = np.array([[0.0], [0.1], [0.2], [5.0]])
+    >>> model = ProximityIsolationForest(n_estimators=10, random_state=7)
+    >>> model.fit(X).score_samples(X).shape
+    (4,)
     """
 
     def __init__(
@@ -63,8 +137,23 @@ class ProximityIsolationForest:
         return min(requested, n_cases) if self.sampling == "subsample" else requested
 
     def fit(self, X, y=None):
+        """Fit the isolation forest.
+
+        Parameters
+        ----------
+        X : array-like or sequence of arrays
+            Training observations in a supported input layout.
+        y : ignored
+            Accepted for estimator-interface compatibility.
+
+        Returns
+        -------
+        self : ProximityIsolationForest
+            Fitted estimator.
+        """
         del y
         self._validate_contamination()
+        X, reference_metadata = prepare_reference_input(X, self.data_retention)
         X, layout = self._validate_X(X, fitting=True)
         n_cases = len(X) if layout == "unequal_multivariate" else X.shape[0]
         distance_layout = "multivariate" if layout == "unequal_multivariate" else layout
@@ -81,11 +170,11 @@ class ProximityIsolationForest:
             self.n_channels_in_, self.n_timepoints_in_ = X[0].shape[0], None
             scores = np.asarray(self._native.anomaly_score_unequal(X))
         elif layout == "multivariate":
-            self._native.fit_multivariate(X)
+            self._native.fit_multivariate(X, *reference_metadata)
             self.n_channels_in_, self.n_timepoints_in_ = X.shape[1:]
             scores = np.asarray(self._native.anomaly_score_multivariate(X))
         else:
-            self._native.fit(X)
+            self._native.fit(X, *reference_metadata)
             scores = np.asarray(self._native.anomaly_score(X))
         self.input_layout_ = layout
         self.n_features_in_ = X[0].shape[0] if layout == "unequal_multivariate" else X.shape[1]
@@ -95,6 +184,13 @@ class ProximityIsolationForest:
         return self
 
     def anomaly_score(self, X):
+        """Return native anomaly-oriented scores; larger is more abnormal.
+
+        Returns
+        -------
+        scores : ndarray of shape (n_samples,)
+            Raw proximity-isolation anomaly scores.
+        """
         native = self._check_is_fitted()
         X, layout = self._validate_X(X)
         if layout != self.input_layout_:
@@ -116,6 +212,13 @@ class ProximityIsolationForest:
         return np.where(self.decision_function(X) < 0.0, -1, 1).astype(np.int64)
 
     def apply(self, X):
+        """Return the terminal node reached in every tree.
+
+        Returns
+        -------
+        leaves : ndarray of shape (n_samples, n_estimators)
+            Stable terminal-node indices for each observation and tree.
+        """
         native = self._check_is_fitted()
         X, layout = self._validate_X(X)
         if layout != self.input_layout_:
@@ -158,6 +261,36 @@ class ProximityIsolationForest:
 
 
     @property
+    def external_training_data_(self):
+        """Persisted external descriptor, or ``None`` when not in reference mode."""
+        native = self._check_is_fitted()
+        metadata = native.external_training_data_
+        if metadata is None:
+            return None
+        path, dtype, shape, offset, length, file_size, fingerprint = metadata
+        return {
+            "path": path,
+            "dtype": dtype,
+            "shape": tuple(shape),
+            "payload_offset": int(offset),
+            "payload_length": int(length),
+            "file_size": int(file_size),
+            "fingerprint": fingerprint,
+        }
+
+    def validate_training_data_reference(self, *, require_fingerprint=False):
+        """Validate and reopen the referenced training collection read-only.
+
+        Validation is explicit. Normal prediction and evaluation continue to
+        use embedded exemplars and do not access the external file.
+        """
+        native = self._check_is_fitted()
+        return validate_reference_descriptor(
+            native.external_training_data_,
+            require_fingerprint=bool(require_fingerprint),
+        )
+
+    @property
     def has_training_data_(self):
         """Whether fitted training observations remain reachable by the model."""
         self._check_is_fitted()
@@ -182,6 +315,18 @@ class ProximityIsolationForest:
         return getattr(self, "data_retention_", self.data_retention) == "copy"
 
     def get_params(self, deep: bool = True):
+        """Return constructor parameters.
+
+        Parameters
+        ----------
+        deep : bool, default=True
+            Accepted for estimator-interface compatibility.
+
+        Returns
+        -------
+        params : dict
+            Parameter names mapped to their current values.
+        """
         del deep
         return {
             "n_estimators": self.n_estimators,
@@ -200,6 +345,13 @@ class ProximityIsolationForest:
         }
 
     def set_params(self, **params):
+        """Set constructor parameters.
+
+        Returns
+        -------
+        self
+            Estimator with updated parameters.
+        """
         valid = self.get_params(deep=False)
         for name, value in params.items():
             if name not in valid:

@@ -25,6 +25,11 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+docs = [
+    "sphinx>=8,<9",
+    "furo>=2025.7.19",
+    "myst-parser>=4,<5",
+]
 test = [
     "pytest>=8",
     "scipy>=1.10",

@@ -74,8 +74,8 @@ pub use config::{
 pub use dimension_sampler::sample_dimensions;
 pub use dimension_selection::DimensionSelection;
 pub use exemplar_store::{
-    MultivariateExemplarBuilder, OwnedMultivariateStore, OwnedObservationStore, OwnedSeries,
-    OwnedVectorStore, VectorExemplarBuilder,
+    FinishedExemplars, MultivariateExemplarBuilder, OwnedMultivariateStore, OwnedObservationStore,
+    OwnedSeries, OwnedVectorStore, VectorExemplarBuilder,
 };
 pub use forest_builder::{
     fit_multivariate_classification_forest, fit_multivariate_isolation_forest,

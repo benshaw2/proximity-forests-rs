@@ -1,4 +1,6 @@
 //! Parallel forest orchestration with model-owned observations.
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::{
     ClassificationTargets, CoreError, CoreResult, DimensionSelection, DimensionSelectionSupport,
@@ -10,10 +12,11 @@ use crate::{
 use super::{
     ClassificationForest, DataRetention, ExecutionContext, FittedForest, IsolationForest,
     NodeMembership, ObservationIndex, OwnedMultivariateStore, OwnedObservationStore,
-    OwnedVectorStore, RegressionForest, RetainedTrainingData, TrainingMetadata, TreeSample,
-    TreeWorkspace, build_multivariate_classification_tree, build_multivariate_isolation_tree,
-    build_multivariate_regression_tree, build_vector_classification_tree,
-    build_vector_isolation_tree, build_vector_regression_tree, parallel_indexed_in,
+    OwnedVectorStore, ProximityTree, RegressionForest, RetainedTrainingData, TrainingMetadata,
+    TreeSample, TreeWorkspace, build_multivariate_classification_tree,
+    build_multivariate_isolation_tree, build_multivariate_regression_tree,
+    build_vector_classification_tree, build_vector_isolation_tree, build_vector_regression_tree,
+    parallel_indexed_in,
 };
 
 /// Fits a vector-layout classification forest in parallel across trees.
@@ -36,7 +39,7 @@ pub fn fit_vector_classification_forest(
     )?;
     let tree_samples = build_tree_samples(&config, observations.len())?;
     let context = ExecutionContext::new(thread_count)?;
-    let trees = {
+    let mut trees = {
         let views = observations;
         parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) = root_membership(&tree_samples[tree_index])?;
@@ -56,6 +59,7 @@ pub fn fit_vector_classification_forest(
             )
         })?
     };
+    compact_vector_exemplars(&mut trees, observations)?;
     Ok(ClassificationForest::new(
         FittedForest::new(
             config.clone(),
@@ -98,7 +102,7 @@ pub fn fit_multivariate_classification_forest(
     }
     let tree_samples = build_tree_samples(&config, observations.len())?;
     let context = ExecutionContext::new(thread_count)?;
-    let trees = {
+    let mut trees = {
         let views = observations;
         parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) = root_membership(&tree_samples[tree_index])?;
@@ -118,6 +122,7 @@ pub fn fit_multivariate_classification_forest(
             )
         })?
     };
+    compact_multivariate_exemplars(&mut trees, observations)?;
     Ok(ClassificationForest::new(
         FittedForest::new(
             config.clone(),
@@ -150,7 +155,7 @@ pub fn fit_vector_regression_forest(
     )?;
     let tree_samples = build_tree_samples(&config, observations.len())?;
     let context = ExecutionContext::new(thread_count)?;
-    let trees = {
+    let mut trees = {
         let views = observations;
         parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) = root_membership(&tree_samples[tree_index])?;
@@ -171,6 +176,7 @@ pub fn fit_vector_regression_forest(
             )
         })?
     };
+    compact_vector_exemplars(&mut trees, observations)?;
     Ok(RegressionForest::new(
         FittedForest::new(
             config.clone(),
@@ -214,7 +220,7 @@ pub fn fit_multivariate_regression_forest(
     }
     let tree_samples = build_tree_samples(&config, observations.len())?;
     let context = ExecutionContext::new(thread_count)?;
-    let trees = {
+    let mut trees = {
         let views = observations;
         parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) = root_membership(&tree_samples[tree_index])?;
@@ -235,6 +241,7 @@ pub fn fit_multivariate_regression_forest(
             )
         })?
     };
+    compact_multivariate_exemplars(&mut trees, observations)?;
     Ok(RegressionForest::new(
         FittedForest::new(
             config.clone(),
@@ -268,7 +275,7 @@ pub fn fit_vector_isolation_forest(
         .resolved_size(observations.len())?;
     let tree_samples = build_tree_samples(&config, observations.len())?;
     let context = ExecutionContext::new(thread_count)?;
-    let trees = {
+    let mut trees = {
         let views = observations;
         parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) = root_membership(&tree_samples[tree_index])?;
@@ -288,6 +295,7 @@ pub fn fit_vector_isolation_forest(
             )
         })?
     };
+    compact_vector_exemplars(&mut trees, observations)?;
     Ok(IsolationForest::new(
         FittedForest::new(
             config.clone(),
@@ -332,7 +340,7 @@ pub fn fit_multivariate_isolation_forest(
         .resolved_size(observations.len())?;
     let tree_samples = build_tree_samples(&config, observations.len())?;
     let context = ExecutionContext::new(thread_count)?;
-    let trees = {
+    let mut trees = {
         let views = observations;
         parallel_indexed_in(&context, config.tree_count.get(), &|tree_index| {
             let (membership, root_observations) = root_membership(&tree_samples[tree_index])?;
@@ -352,6 +360,7 @@ pub fn fit_multivariate_isolation_forest(
             )
         })?
     };
+    compact_multivariate_exemplars(&mut trees, observations)?;
     Ok(IsolationForest::new(
         FittedForest::new(
             config.clone(),
@@ -361,6 +370,93 @@ pub fn fit_multivariate_isolation_forest(
         ),
         normalization_size,
     ))
+}
+
+fn global_exemplar_plan(trees: &[ProximityTree]) -> CoreResult<(Vec<usize>, Vec<Vec<usize>>)> {
+    let mut unique = BTreeSet::new();
+    for tree in trees {
+        let origins = tree.exemplar_training_indices().ok_or_else(|| {
+            CoreError::invalid_data("newly fitted tree is missing exemplar provenance")
+        })?;
+        unique.extend(origins.iter().copied());
+    }
+    let origins = unique.into_iter().collect::<Vec<_>>();
+    let ids = origins
+        .iter()
+        .enumerate()
+        .map(|(id, &training_index)| (training_index, id))
+        .collect::<BTreeMap<_, _>>();
+    let maps = trees
+        .iter()
+        .map(|tree| {
+            tree.exemplar_training_indices()
+                .ok_or_else(|| {
+                    CoreError::invalid_data("newly fitted tree is missing exemplar provenance")
+                })?
+                .iter()
+                .map(|index| {
+                    ids.get(index).copied().ok_or_else(|| {
+                        CoreError::invalid_data(
+                            "tree exemplar was absent from the forest compaction plan",
+                        )
+                    })
+                })
+                .collect::<CoreResult<Vec<_>>>()
+        })
+        .collect::<CoreResult<Vec<_>>>()?;
+    Ok((origins, maps))
+}
+
+fn compact_vector_exemplars(
+    trees: &mut [ProximityTree],
+    observations: &[NumericVectorView<'_>],
+) -> CoreResult<()> {
+    let (origins, maps) = global_exemplar_plan(trees)?;
+    let selected = origins
+        .iter()
+        .map(|&index| {
+            observations.get(index).copied().ok_or_else(|| {
+                CoreError::invalid_data(
+                    "forest exemplar training index is outside the fitting collection",
+                )
+            })
+        })
+        .collect::<CoreResult<Vec<_>>>()?;
+    let pool = Arc::new(OwnedObservationStore::Vector(OwnedVectorStore::from_views(
+        &selected,
+    )?));
+    let origins: Arc<[usize]> = origins.into();
+    for (tree, map) in trees.iter_mut().zip(maps) {
+        tree.remap_exemplars(&map)?;
+        tree.replace_shared_exemplars(Arc::clone(&pool), Arc::clone(&origins));
+    }
+    Ok(())
+}
+
+fn compact_multivariate_exemplars(
+    trees: &mut [ProximityTree],
+    observations: &[MultivariateSeriesView<'_>],
+) -> CoreResult<()> {
+    let (origins, maps) = global_exemplar_plan(trees)?;
+    let selected = origins
+        .iter()
+        .map(|&index| {
+            observations.get(index).copied().ok_or_else(|| {
+                CoreError::invalid_data(
+                    "forest exemplar training index is outside the fitting collection",
+                )
+            })
+        })
+        .collect::<CoreResult<Vec<_>>>()?;
+    let pool = Arc::new(OwnedObservationStore::Multivariate(
+        OwnedMultivariateStore::from_views(&selected)?,
+    ));
+    let origins: Arc<[usize]> = origins.into();
+    for (tree, map) in trees.iter_mut().zip(maps) {
+        tree.remap_exemplars(&map)?;
+        tree.replace_shared_exemplars(Arc::clone(&pool), Arc::clone(&origins));
+    }
+    Ok(())
 }
 
 fn retain_vector(

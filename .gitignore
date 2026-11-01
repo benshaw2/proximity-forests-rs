@@ -13,6 +13,11 @@ practical_test.py
 PFGAP_output/
 .*backups/
 /benchmarks/
+/benchmark_data/
+
+# Generated documentation
+/docs/_build/
+/docs/api_reference/generated/
 
 # RustRover / IntelliJ local workspace state
 /.idea/
@@ -69,3 +74,7 @@ Thumbs.db
 *~
 *.swp
 *.swo
+
+# Generated documentation
+docs/_build/
+docs/api_reference/generated/

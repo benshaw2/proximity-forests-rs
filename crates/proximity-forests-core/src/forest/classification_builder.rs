@@ -7,9 +7,9 @@ use crate::{
 
 use super::{
     CandidateSelectionContext, ClassificationLeaf, ExecutionContext, LeafPayload,
-    MultivariateExemplarBuilder, NodeMembership, ObservationIndex, OwnedObservationStore,
-    ProximityTree, TreeWorkspace, VectorExemplarBuilder, build_tree_iterative,
-    classification_node_is_pure, select_multivariate_classification, select_vector_classification,
+    MultivariateExemplarBuilder, NodeMembership, ObservationIndex, ProximityTree, TreeWorkspace,
+    VectorExemplarBuilder, build_tree_iterative, classification_node_is_pure,
+    select_multivariate_classification, select_vector_classification,
 };
 
 /// Builds one vector-layout classification tree iteratively.
@@ -80,7 +80,7 @@ pub fn build_vector_classification_tree(
                             "selected exemplar observation was unavailable",
                         )
                     })?;
-                    exemplar_builder.push(observation)
+                    exemplar_builder.intern(index.get(), observation)
                 })
                 .collect()
         },
@@ -92,7 +92,7 @@ pub fn build_vector_classification_tree(
             )?))
         },
     )?;
-    tree.set_exemplars(OwnedObservationStore::Vector(exemplar_builder.finish()));
+    tree.set_exemplars(exemplar_builder.finish()?);
     Ok(tree)
 }
 
@@ -167,7 +167,7 @@ pub fn build_multivariate_classification_tree(
                             "selected exemplar observation was unavailable",
                         )
                     })?;
-                    exemplar_builder.push(observation)
+                    exemplar_builder.intern(index.get(), observation)
                 })
                 .collect()
         },
@@ -179,8 +179,6 @@ pub fn build_multivariate_classification_tree(
             )?))
         },
     )?;
-    tree.set_exemplars(OwnedObservationStore::Multivariate(
-        exemplar_builder.finish(),
-    ));
+    tree.set_exemplars(exemplar_builder.finish()?);
     Ok(tree)
 }

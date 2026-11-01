@@ -2,9 +2,8 @@
 
 use super::{
     CandidateSelectionContext, ExecutionContext, LeafPayload, MultivariateExemplarBuilder,
-    NodeMembership, ObservationIndex, OwnedObservationStore, ProximityTree, TreeWorkspace,
-    VectorExemplarBuilder, build_tree_iterative, select_multivariate_isolation,
-    select_vector_isolation,
+    NodeMembership, ObservationIndex, ProximityTree, TreeWorkspace, VectorExemplarBuilder,
+    build_tree_iterative, select_multivariate_isolation, select_vector_isolation,
 };
 use crate::{
     CoreResult, DistanceChoice, DistanceSamplingContext, DistanceWorkShape, ForestConfig,
@@ -57,7 +56,7 @@ pub fn build_vector_isolation_tree(
                     distance_work,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
-                    exemplar_count,
+                    exemplar_count: exemplar_count.min(membership.distinct_count()),
                     candidate_count: config.candidate_count.get(),
                     tie_policy: config.branch_tie_policy,
                     tree_seed,
@@ -75,7 +74,7 @@ pub fn build_vector_isolation_tree(
                             "selected exemplar observation was unavailable",
                         )
                     })?;
-                    exemplar_builder.push(observation)
+                    exemplar_builder.intern(index.get(), observation)
                 })
                 .collect()
         },
@@ -85,7 +84,7 @@ pub fn build_vector_isolation_tree(
             })
         },
     )?;
-    tree.set_exemplars(OwnedObservationStore::Vector(exemplar_builder.finish()));
+    tree.set_exemplars(exemplar_builder.finish()?);
     Ok(tree)
 }
 
@@ -138,7 +137,7 @@ pub fn build_multivariate_isolation_tree(
                     distance_work,
                     available_dimensions,
                     dimension_selection: config.dimension_selection,
-                    exemplar_count,
+                    exemplar_count: exemplar_count.min(membership.distinct_count()),
                     candidate_count: config.candidate_count.get(),
                     tie_policy: config.branch_tie_policy,
                     tree_seed,
@@ -156,7 +155,7 @@ pub fn build_multivariate_isolation_tree(
                             "selected exemplar observation was unavailable",
                         )
                     })?;
-                    exemplar_builder.push(observation)
+                    exemplar_builder.intern(index.get(), observation)
                 })
                 .collect()
         },
@@ -166,8 +165,6 @@ pub fn build_multivariate_isolation_tree(
             })
         },
     )?;
-    tree.set_exemplars(OwnedObservationStore::Multivariate(
-        exemplar_builder.finish(),
-    ));
+    tree.set_exemplars(exemplar_builder.finish()?);
     Ok(tree)
 }

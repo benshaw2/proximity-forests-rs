@@ -8,15 +8,110 @@ from ._core import _NativeProximityForestClassifier
 from ._distances import normalize_distances
 from ._sampling import normalize_sampling
 from ._max_features import normalize_max_features
+from ._reference import prepare_reference_input, validate_reference_descriptor
 
 
 class ProximityForestClassifier:
-    """Proximity forest classifier for single- and multi-output targets.
+    """Proximity-forest classifier for vector and time-series data.
 
-    One-dimensional targets preserve the existing single-output API. A
-    two-dimensional target is encoded independently by column and produces a
-    prediction matrix. Binary indicator matrices are identified as multilabel
-    targets while sharing the same native multi-output representation.
+    Each tree recursively evaluates candidate exemplar-based splitters and
+    routes an observation to the branch with the nearest exemplar. Forest
+    probabilities are formed from the fitted classification leaves. One- and
+    two-dimensional targets are supported.
+
+    Parameters
+    ----------
+    n_estimators : int, default=100
+        Number of trees in the forest.
+    n_candidates : int, default=5
+        Number of candidate splitters evaluated at each splittable node.
+    max_depth : int or None, default=None
+        Maximum tree depth. ``None`` allows growth until another stopping rule
+        applies.
+    min_samples_split : int, default=2
+        Minimum number of sampled observations required to split a node.
+    max_features : {None, "sqrt", "log2"}, int, or float, default=None
+        Number of features or channels sampled for a candidate splitter.
+        ``None`` uses all available dimensions. An integer selects an absolute
+        count. A float in ``(0, 1]`` selects a proportion.
+    distances : str, distance specification, or sequence, default="default"
+        Distance catalog used to generate candidate splitters. The accepted
+        distances depend on whether ``X`` is vector, equal-length time-series,
+        or unequal-length time-series data.
+    sampling : {"bootstrap", "subsample", "full"}, default="bootstrap"
+        Per-tree observation sampling policy. ``"bootstrap"`` samples with
+        replacement, ``"subsample"`` samples distinct observations, and
+        ``"full"`` uses every observation in its original order.
+    sample_size : int, float, or None, default=None
+        Per-tree sample size. An integer is an absolute count and a float in
+        ``(0, 1]`` is a proportion. ``None`` uses the training-set size.
+    random_state : int or None, default=None
+        Seed controlling observation sampling, candidate generation, parameter
+        sampling, exemplar selection, and random tie resolution. ``None`` is
+        currently equivalent to seed ``0``.
+    n_jobs : int or None, default=1
+        Worker budget. ``1`` requests sequential execution. ``None`` and ``-1``
+        use the available logical CPUs.
+    data_retention : {"exemplars", "copy", "reference"}, default="exemplars"
+        Training-data retention policy. ``"exemplars"`` embeds only observations
+        selected by fitted splitters. ``"copy"`` embeds the complete training
+        collection once. ``"reference"`` stores metadata for a complete,
+        C-contiguous ``.npy`` memory map while retaining fitted exemplars for
+        ordinary inference.
+    oob_score : bool, default=False
+        Whether to compute out-of-bag predictions and a classification accuracy
+        score after fitting. Requires a sampling policy that can leave
+        observations out of a tree sample.
+
+    Attributes
+    ----------
+    classes_ : ndarray or list of ndarray
+        Class labels for each output. A one-dimensional target produces one
+        array; a multi-output target produces one array per output.
+    n_classes_ : int or list of int
+        Number of classes for each output.
+    n_outputs_ : int
+        Number of target outputs.
+    target_type_ : str
+        Resolved target type: ``"binary"``, ``"multiclass"``,
+        ``"multilabel-indicator"``, or ``"multiclass-multioutput"``.
+    input_layout_ : {"vector", "multivariate", "unequal_multivariate"}
+        Input layout established during fitting.
+    n_features_in_ : int
+        Number of vector features, or number of channels for time-series input.
+    n_channels_in_ : int
+        Number of channels for multivariate time-series input.
+    n_timepoints_in_ : int or None
+        Time points per case for equal-length multivariate input, or ``None``
+        for unequal-length input.
+    data_retention_ : str
+        Retention policy used by the fitted model.
+    oob_decision_function_ : ndarray or list of ndarray
+        Out-of-bag class probabilities when ``oob_score=True``. Rows without a
+        vote contain ``NaN``.
+    oob_prediction_ : ndarray
+        Decoded out-of-bag predictions when ``oob_score=True``.
+    oob_vote_counts_ : ndarray of shape (n_samples,)
+        Number of out-of-bag tree votes per training observation.
+    oob_score_ : float
+        Accuracy over training observations that received at least one OOB vote.
+
+    Notes
+    -----
+    Two-dimensional ``X`` is interpreted as vector or univariate-series input.
+    Equal-length multivariate series use shape
+    ``(n_cases, n_channels, n_timepoints)``. Unequal-length series use one
+    ``(n_channels, n_timepoints_i)`` array per case.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from proximity_forests import ProximityForestClassifier
+    >>> X = np.array([[0.0], [0.2], [0.8], [1.0]])
+    >>> y = np.array(["low", "low", "high", "high"])
+    >>> model = ProximityForestClassifier(n_estimators=10, random_state=7)
+    >>> model.fit(X, y).predict([[0.1], [0.9]]).shape
+    (2,)
     """
 
     def __init__(
@@ -49,6 +144,21 @@ class ProximityForestClassifier:
         self.oob_score = oob_score
 
     def fit(self, X, y):
+        """Fit the classifier.
+
+        Parameters
+        ----------
+        X : array-like or sequence of arrays
+            Training observations in a supported input layout.
+        y : array-like of shape (n_samples,) or (n_samples, n_outputs)
+            Categorical target labels.
+
+        Returns
+        -------
+        self : ProximityForestClassifier
+            Fitted estimator.
+        """
+        X, reference_metadata = prepare_reference_input(X, self.data_retention)
         X, layout = self._validate_X(X, fitting=True)
         n_cases = len(X) if layout == "unequal_multivariate" else X.shape[0]
         y = np.asarray(y)
@@ -80,10 +190,14 @@ class ProximityForestClassifier:
             self._native.fit_unequal(X, encoded_y, [len(v) for v in classes])
             self.n_channels_in_, self.n_timepoints_in_ = X[0].shape[0], None
         elif layout == "multivariate":
-            self._native.fit_multivariate(X, encoded_y, [len(v) for v in classes])
+            self._native.fit_multivariate(
+                X, encoded_y, [len(v) for v in classes], *reference_metadata
+            )
             self.n_channels_in_, self.n_timepoints_in_ = X.shape[1:]
         else:
-            self._native.fit(X, encoded_y, [len(v) for v in classes])
+            self._native.fit(
+                X, encoded_y, [len(v) for v in classes], *reference_metadata
+            )
         self.input_layout_ = layout
         self.classes_ = classes[0] if self._target_was_1d else classes
         self.n_classes_ = len(classes[0]) if self._target_was_1d else [len(v) for v in classes]
@@ -127,6 +241,13 @@ class ProximityForestClassifier:
         return self
 
     def predict(self, X):
+        """Predict class labels for ``X``.
+
+        Returns
+        -------
+        y_pred : ndarray
+            Predicted labels, with one column per output for multi-output fits.
+        """
         native = self._check_is_fitted()
         X, layout = self._validate_X(X)
         if layout != self.input_layout_:
@@ -143,6 +264,13 @@ class ProximityForestClassifier:
         return np.column_stack([self.classes_[i][encoded[:, i]] for i in range(self.n_outputs_)])
 
     def predict_proba(self, X):
+        """Predict class probabilities for ``X``.
+
+        Returns
+        -------
+        probabilities : ndarray or list of ndarray
+            One matrix for a single output, or one matrix per output.
+        """
         native = self._check_is_fitted()
         X, layout = self._validate_X(X)
         if layout != self.input_layout_:
@@ -157,6 +285,13 @@ class ProximityForestClassifier:
         return probabilities[0] if self._target_was_1d else probabilities
 
     def apply(self, X):
+        """Return the terminal node reached in every tree.
+
+        Returns
+        -------
+        leaves : ndarray of shape (n_samples, n_estimators)
+            Stable terminal-node indices for each observation and tree.
+        """
         native = self._check_is_fitted()
         X, layout = self._validate_X(X)
         if layout != self.input_layout_:
@@ -205,6 +340,36 @@ class ProximityForestClassifier:
 
 
     @property
+    def external_training_data_(self):
+        """Persisted external descriptor, or ``None`` when not in reference mode."""
+        native = self._check_is_fitted()
+        metadata = native.external_training_data_
+        if metadata is None:
+            return None
+        path, dtype, shape, offset, length, file_size, fingerprint = metadata
+        return {
+            "path": path,
+            "dtype": dtype,
+            "shape": tuple(shape),
+            "payload_offset": int(offset),
+            "payload_length": int(length),
+            "file_size": int(file_size),
+            "fingerprint": fingerprint,
+        }
+
+    def validate_training_data_reference(self, *, require_fingerprint=False):
+        """Validate and reopen the referenced training collection read-only.
+
+        Validation is explicit. Normal prediction and evaluation continue to
+        use embedded exemplars and do not access the external file.
+        """
+        native = self._check_is_fitted()
+        return validate_reference_descriptor(
+            native.external_training_data_,
+            require_fingerprint=bool(require_fingerprint),
+        )
+
+    @property
     def has_training_data_(self):
         """Whether fitted training observations remain reachable by the model."""
         self._check_is_fitted()
@@ -229,6 +394,18 @@ class ProximityForestClassifier:
         return getattr(self, "data_retention_", self.data_retention) == "copy"
 
     def get_params(self, deep: bool = True):
+        """Return constructor parameters.
+
+        Parameters
+        ----------
+        deep : bool, default=True
+            Accepted for estimator-interface compatibility.
+
+        Returns
+        -------
+        params : dict
+            Parameter names mapped to their current values.
+        """
         del deep
         return {
             "n_estimators": self.n_estimators,
@@ -246,6 +423,13 @@ class ProximityForestClassifier:
         }
 
     def set_params(self, **params):
+        """Set constructor parameters.
+
+        Returns
+        -------
+        self
+            Estimator with updated parameters.
+        """
         valid = self.get_params(deep=False)
         for name, value in params.items():
             if name not in valid:

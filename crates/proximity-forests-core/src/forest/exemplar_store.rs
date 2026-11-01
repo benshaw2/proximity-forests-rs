@@ -1,5 +1,7 @@
 //! Model-owned observation storage used by fitted exemplar references.
 
+use std::collections::BTreeMap;
+
 use crate::{CoreError, CoreResult, MultivariateSeriesView, NumericVectorView, ScalarKind};
 
 /// Owned vector observations preserving their original floating-point dtype.
@@ -261,55 +263,95 @@ impl OwnedMultivariateStore {
     }
 }
 
-/// Append-only vector exemplar arena used while committing fitted splits.
-///
-/// The arena preserves the fitting collection's scalar kind and copies only
-/// observations selected by winning candidates. Rejected candidates never
-/// allocate durable exemplar storage.
+/// One completed tree-local exemplar arena plus original training identities.
 #[derive(Clone, Debug, PartialEq)]
-pub enum VectorExemplarBuilder {
-    /// Single-precision exemplar values.
-    F32(Vec<Vec<f32>>),
-    /// Double-precision exemplar values.
-    F64(Vec<Vec<f64>>),
+pub struct FinishedExemplars {
+    store: OwnedObservationStore,
+    training_indices: Vec<usize>,
+}
+impl FinishedExemplars {
+    /// Creates a checked completed arena.
+    pub fn new(store: OwnedObservationStore, training_indices: Vec<usize>) -> CoreResult<Self> {
+        let value_count = match &store {
+            OwnedObservationStore::Vector(values) => values.len(),
+            OwnedObservationStore::Multivariate(values) => values.len(),
+        };
+        if value_count != training_indices.len() {
+            return Err(CoreError::shape_mismatch(
+                "exemplar values and training-index provenance must have equal lengths",
+            ));
+        }
+        Ok(Self {
+            store,
+            training_indices,
+        })
+    }
+    /// Returns model-owned exemplar values.
+    #[must_use]
+    pub const fn store(&self) -> &OwnedObservationStore {
+        &self.store
+    }
+    /// Returns original training indices in exemplar-ID order.
+    #[must_use]
+    pub fn training_indices(&self) -> &[usize] {
+        &self.training_indices
+    }
+    /// Consumes the completed arena.
+    #[must_use]
+    pub fn into_parts(self) -> (OwnedObservationStore, Vec<usize>) {
+        (self.store, self.training_indices)
+    }
 }
 
+/// Identity-interning vector exemplar arena used while committing fitted splits.
+///
+/// Repeated winning uses of the same training observation reuse one durable ID.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VectorExemplarBuilder {
+    values: OwnedVectorStore,
+    training_indices: BTreeMap<usize, super::ExemplarId>,
+}
 impl VectorExemplarBuilder {
     /// Creates an empty arena for one scalar kind.
     #[must_use]
-    pub const fn new(scalar_kind: ScalarKind) -> Self {
-        match scalar_kind {
-            ScalarKind::F32 => Self::F32(Vec::new()),
-            ScalarKind::F64 => Self::F64(Vec::new()),
+    pub fn new(scalar_kind: ScalarKind) -> Self {
+        Self {
+            values: match scalar_kind {
+                ScalarKind::F32 => OwnedVectorStore::F32(Vec::new()),
+                ScalarKind::F64 => OwnedVectorStore::F64(Vec::new()),
+            },
+            training_indices: BTreeMap::new(),
         }
     }
-
-    /// Returns the number of committed exemplars.
+    /// Returns the number of distinct committed exemplars.
     #[must_use]
     pub fn len(&self) -> usize {
-        match self {
-            Self::F32(values) => values.len(),
-            Self::F64(values) => values.len(),
-        }
+        self.training_indices.len()
     }
-
     /// Reports whether no exemplars have been committed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.training_indices.is_empty()
     }
-
-    /// Copies one selected observation and returns its durable exemplar ID.
-    pub fn push(&mut self, observation: NumericVectorView<'_>) -> CoreResult<super::ExemplarId> {
-        let id = super::ExemplarId::try_from_index(self.len()).ok_or_else(|| {
-            CoreError::invalid_data("a fitted tree contains too many exemplars for u32 IDs")
-        })?;
-        match (self, observation) {
-            (Self::F32(values), NumericVectorView::F32(observation)) => {
-                values.push(observation.to_vec());
+    /// Interns one selected training observation and returns its durable ID.
+    pub fn intern(
+        &mut self,
+        training_index: usize,
+        observation: NumericVectorView<'_>,
+    ) -> CoreResult<super::ExemplarId> {
+        if let Some(&id) = self.training_indices.get(&training_index) {
+            return Ok(id);
+        }
+        let id =
+            super::ExemplarId::try_from_index(self.training_indices.len()).ok_or_else(|| {
+                CoreError::invalid_data("a fitted tree contains too many exemplars for u32 IDs")
+            })?;
+        match (&mut self.values, observation) {
+            (OwnedVectorStore::F32(values), NumericVectorView::F32(row)) => {
+                values.push(row.to_vec())
             }
-            (Self::F64(values), NumericVectorView::F64(observation)) => {
-                values.push(observation.to_vec());
+            (OwnedVectorStore::F64(values), NumericVectorView::F64(row)) => {
+                values.push(row.to_vec())
             }
             _ => {
                 return Err(CoreError::shape_mismatch(
@@ -317,89 +359,66 @@ impl VectorExemplarBuilder {
                 ));
             }
         }
+        self.training_indices.insert(training_index, id);
         Ok(id)
     }
-
-    /// Finishes the arena as immutable model-owned storage.
-    #[must_use]
-    pub fn finish(self) -> OwnedVectorStore {
-        match self {
-            Self::F32(values) => OwnedVectorStore::F32(values),
-            Self::F64(values) => OwnedVectorStore::F64(values),
-        }
+    /// Finishes the arena while preserving original training identities.
+    pub fn finish(self) -> CoreResult<FinishedExemplars> {
+        let mut indexed = self.training_indices.into_iter().collect::<Vec<_>>();
+        indexed.sort_by_key(|(_, id)| id.index());
+        FinishedExemplars::new(
+            OwnedObservationStore::Vector(self.values),
+            indexed.into_iter().map(|(index, _)| index).collect(),
+        )
     }
 }
-
-/// Append-only multivariate exemplar arena used while committing fitted splits.
+/// Identity-interning multivariate exemplar arena used while committing fitted splits.
 #[derive(Clone, Debug, PartialEq)]
-pub enum MultivariateExemplarBuilder {
-    /// Single-precision exemplar values.
-    F32 {
-        /// Shared channel count.
-        dimension_count: usize,
-        /// Committed observations.
-        values: Vec<OwnedSeries<f32>>,
-    },
-    /// Double-precision exemplar values.
-    F64 {
-        /// Shared channel count.
-        dimension_count: usize,
-        /// Committed observations.
-        values: Vec<OwnedSeries<f64>>,
-    },
+pub struct MultivariateExemplarBuilder {
+    values: OwnedMultivariateStore,
+    dimension_count: usize,
+    training_indices: BTreeMap<usize, super::ExemplarId>,
 }
-
 impl MultivariateExemplarBuilder {
     /// Creates an empty arena for one scalar kind and channel count.
     #[must_use]
-    pub const fn new(scalar_kind: ScalarKind, dimension_count: usize) -> Self {
-        match scalar_kind {
-            ScalarKind::F32 => Self::F32 {
-                dimension_count,
-                values: Vec::new(),
+    pub fn new(scalar_kind: ScalarKind, dimension_count: usize) -> Self {
+        Self {
+            values: match scalar_kind {
+                ScalarKind::F32 => OwnedMultivariateStore::F32(Vec::new()),
+                ScalarKind::F64 => OwnedMultivariateStore::F64(Vec::new()),
             },
-            ScalarKind::F64 => Self::F64 {
-                dimension_count,
-                values: Vec::new(),
-            },
+            dimension_count,
+            training_indices: BTreeMap::new(),
         }
     }
-
-    /// Returns the number of committed exemplars.
+    /// Returns the number of distinct committed exemplars.
     #[must_use]
     pub fn len(&self) -> usize {
-        match self {
-            Self::F32 { values, .. } => values.len(),
-            Self::F64 { values, .. } => values.len(),
-        }
+        self.training_indices.len()
     }
-
     /// Reports whether no exemplars have been committed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.training_indices.is_empty()
     }
-
-    /// Copies one selected multivariate observation into contiguous storage.
-    pub fn push(
+    /// Interns one selected training observation and returns its durable ID.
+    pub fn intern(
         &mut self,
+        training_index: usize,
         observation: MultivariateSeriesView<'_>,
     ) -> CoreResult<super::ExemplarId> {
-        let id = super::ExemplarId::try_from_index(self.len()).ok_or_else(|| {
-            CoreError::invalid_data("a fitted tree contains too many exemplars for u32 IDs")
-        })?;
-        let expected_dimensions = match self {
-            Self::F32 {
-                dimension_count, ..
-            }
-            | Self::F64 {
-                dimension_count, ..
-            } => *dimension_count,
-        };
-        validate_series(observation, observation.scalar_kind(), expected_dimensions)?;
+        if let Some(&id) = self.training_indices.get(&training_index) {
+            return Ok(id);
+        }
+        validate_series(observation, observation.scalar_kind(), self.dimension_count)?;
+        let id =
+            super::ExemplarId::try_from_index(self.training_indices.len()).ok_or_else(|| {
+                CoreError::invalid_data("a fitted tree contains too many exemplars for u32 IDs")
+            })?;
         let value_count = observation.dimension_count() * observation.time_count();
-        match self {
-            Self::F32 { values, .. } if observation.scalar_kind() == ScalarKind::F32 => {
+        match &mut self.values {
+            OwnedMultivariateStore::F32(values) if observation.scalar_kind() == ScalarKind::F32 => {
                 let mut owned = Vec::with_capacity(value_count);
                 for dimension in 0..observation.dimension_count() {
                     for time in 0..observation.time_count() {
@@ -414,7 +433,7 @@ impl MultivariateExemplarBuilder {
                     time_count: observation.time_count(),
                 });
             }
-            Self::F64 { values, .. } if observation.scalar_kind() == ScalarKind::F64 => {
+            OwnedMultivariateStore::F64(values) if observation.scalar_kind() == ScalarKind::F64 => {
                 let mut owned = Vec::with_capacity(value_count);
                 for dimension in 0..observation.dimension_count() {
                     for time in 0..observation.time_count() {
@@ -435,19 +454,19 @@ impl MultivariateExemplarBuilder {
                 ));
             }
         }
+        self.training_indices.insert(training_index, id);
         Ok(id)
     }
-
-    /// Finishes the arena as immutable model-owned storage.
-    #[must_use]
-    pub fn finish(self) -> OwnedMultivariateStore {
-        match self {
-            Self::F32 { values, .. } => OwnedMultivariateStore::F32(values),
-            Self::F64 { values, .. } => OwnedMultivariateStore::F64(values),
-        }
+    /// Finishes the arena while preserving original training identities.
+    pub fn finish(self) -> CoreResult<FinishedExemplars> {
+        let mut indexed = self.training_indices.into_iter().collect::<Vec<_>>();
+        indexed.sort_by_key(|(_, id)| id.index());
+        FinishedExemplars::new(
+            OwnedObservationStore::Multivariate(self.values),
+            indexed.into_iter().map(|(index, _)| index).collect(),
+        )
     }
 }
-
 /// Task-independent model-owned observation repository.
 #[derive(Clone, Debug, PartialEq)]
 pub enum OwnedObservationStore {
