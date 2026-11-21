@@ -28,8 +28,18 @@ printf 'Maturin: '
 cargo fmt --all
 cargo fmt --all --check
 
-# Compile both the core and Python binding crates before replacing the installed extension.
+# Compile and test both the core and Python binding crates before replacing the
+# installed extension. The workspace currently enables a broad Clippy lint set;
+# treating every lint as an error is a separate repository-wide cleanup and is
+# not required to validate a feature or release build.
 cargo check --workspace
+
+# Opt in to strict Clippy explicitly. This is useful for a dedicated lint-cleanup
+# branch, but avoids blocking ordinary rebuilds on pre-existing workspace lints.
+if [[ "${PF_STRICT_CLIPPY:-0}" == "1" ]]; then
+    cargo clippy --workspace --all-targets -- -D warnings
+fi
+
 cargo test --workspace
 
 # Prevent an older in-tree extension from shadowing the editable installation.

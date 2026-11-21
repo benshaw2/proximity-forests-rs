@@ -1,5 +1,34 @@
 # Release notes
 
+## 0.1.0b2
+
+Second public beta, adding exact per-tree sampling metadata for downstream
+forest-proximity construction.
+
+### Added
+
+- `get_oob_mask()` on classifier, regressor, and isolation estimators, returning
+  exact out-of-bag membership with shape `(n_samples_fit, n_estimators)`
+- `get_in_bag_counts()` on all three estimator families, returning exact
+  bootstrap or subsample multiplicities with the same sample-by-tree orientation
+- lazy NumPy materialization from the fitted model's existing persisted sampling
+  metadata
+- coverage for bootstrap, subsample, full sampling, fitted-state errors,
+  data-retention policies, and pickle round trips
+
+### Integration
+
+- enables external packages to construct uniform, KeRF, OOB, and GAP forest
+  proximities without reconstructing samples from random seeds
+- preserves bootstrap multiplicities greater than one, as required by GAP
+  weighting
+
+### Compatibility
+
+- no fitted-model serialization format change
+- no additional fitted-model memory unless a sampling matrix is requested
+- existing `0.1.0b1` model payloads remain compatible with this beta release
+
 ## 0.1.0b1
 
 This beta release provides the first public Python package backed by the Rust

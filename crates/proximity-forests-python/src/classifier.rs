@@ -25,6 +25,7 @@ use crate::{
         configure_multivariate_data_retention, parse_dimension_selection,
         parse_observation_sampling,
     },
+    sampling_metadata::{in_bag_counts, oob_mask},
 };
 
 /// Rust-backed classifier used by the public Python estimator wrapper.
@@ -741,6 +742,18 @@ impl NativeProximityForestClassifier {
         )
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(array.into_pyarray(py))
+    }
+
+    /// Returns exact sample-by-tree out-of-bag membership.
+    fn get_oob_mask<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<bool>>> {
+        let forest = self.model.as_ref().ok_or_else(not_fitted)?.forest();
+        oob_mask(py, forest)
+    }
+
+    /// Returns exact sample-by-tree fitting multiplicities.
+    fn get_in_bag_counts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<u32>>> {
+        let forest = self.model.as_ref().ok_or_else(not_fitted)?.forest();
+        in_bag_counts(py, forest)
     }
 
     /// Returns persisted external-training metadata without opening the file.

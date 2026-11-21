@@ -267,6 +267,30 @@ class ProximityForestRegressor:
         )
 
 
+    def get_oob_mask(self):
+        """Return exact per-tree out-of-bag membership.
+
+        Returns
+        -------
+        mask : ndarray of shape (n_samples_fit, n_estimators), dtype=bool
+            ``mask[i, t]`` is true exactly when fitting sample ``i`` was not
+            selected for tree ``t``.
+        """
+        return np.asarray(self._check_is_fitted().get_oob_mask(), dtype=bool)
+
+    def get_in_bag_counts(self):
+        """Return exact per-tree fitting multiplicities.
+
+        Returns
+        -------
+        counts : ndarray of shape (n_samples_fit, n_estimators), dtype=uint32
+            Bootstrap multiplicities. Subsampling produces zeros and ones; full
+            sampling produces an all-ones matrix.
+        """
+        return np.asarray(
+            self._check_is_fitted().get_in_bag_counts(), dtype=np.uint32
+        )
+
     @property
     def external_training_data_(self):
         """Persisted external descriptor, or ``None`` when not in reference mode."""

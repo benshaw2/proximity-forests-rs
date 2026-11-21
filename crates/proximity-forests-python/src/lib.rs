@@ -6,6 +6,7 @@ mod error;
 mod input;
 mod isolation_estimator;
 mod regressor;
+mod sampling_metadata;
 
 use classifier::NativeProximityForestClassifier;
 use isolation_estimator::NativeProximityIsolationForest;
